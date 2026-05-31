@@ -1,15 +1,18 @@
 import Phaser from 'phaser';
-import { TEXTURES, TILE_SIZE, PALETTE, FONT_FAMILY, TIME, PLAYER } from '../config.js';
+import { TILE_SIZE, PALETTE, FONT_FAMILY, TIME, COLLIDING_TILES, TILES, DOGWALK_CFG } from '../config.js';
 import { CITY, BUILDING_BY_ID } from '../data/city.js';
-import { COLLIDING_TILES } from '../config.js';
+import { KEYS } from '../data/assetManifest.js';
 import { NPCS } from '../data/npcs.js';
 import { DIALOGUE } from '../data/dialogue.js';
 import { JOBS } from '../data/jobs.js';
 import { EventBus, EVENTS } from '../eventbus.js';
 import { gameState } from '../core/GameState.js';
+import { rollAvailability } from '../core/LuckEngine.js';
 import InputController from '../core/InputController.js';
 import Player from '../entities/Player.js';
 import NPC from '../entities/NPC.js';
+import Atmosphere from '../core/Atmosphere.js';
+import DogWalk from '../activities/DogWalk.js';
 
 // The overworld city. Owns: the tile map + collision, the world clock that
 // advances in-game time, the player + NPCs, the smooth follow camera, and the
@@ -29,6 +32,10 @@ export default class WorldScene extends Phaser.Scene {
     this.createNPCs();
     this.setupCollision();
     this.setupCamera();
+    this.setupAtmosphere();
+
+    // The procedural dog-walking activity (the realistic job template).
+    this.dogWalk = new DogWalk(this);
 
     this.input_ = new InputController(this);
     // Stop the browser from stealing TAB (focus traversal) so the phone opens.
@@ -38,10 +45,20 @@ export default class WorldScene extends Phaser.Scene {
     this.setupClock();
     this.maybeRollWeather();
 
+    // Smooth fade-in when entering the world (criterion #9: scene transitions).
+    this.cameras.main.fadeIn(450, 0, 0, 0);
+
     // React to day changes for weather + toasts.
     EventBus.on(EVENTS.DAY_PASSED, this.onNewDay, this);
+    // Significant events (eviction, firing) shake the screen.
+    this._onToast = (p) => {
+      if (p.key === 'evicted' || p.key === 'fired') this.cameras.main.shake(350, 0.012);
+      else if (p.key) this.cameras.main.shake(150, 0.005);
+    };
+    EventBus.on(EVENTS.TOAST, this._onToast, this);
     this.events.once('shutdown', () => {
       EventBus.off(EVENTS.DAY_PASSED, this.onNewDay, this);
+      EventBus.off(EVENTS.TOAST, this._onToast, this);
       if (this.clockTimer) this.clockTimer.remove();
     });
 
@@ -74,25 +91,73 @@ export default class WorldScene extends Phaser.Scene {
       tileWidth: TILE_SIZE,
       tileHeight: TILE_SIZE,
     });
-    const tileset = map.addTilesetImage('tiles', TEXTURES.TILES, TILE_SIZE, TILE_SIZE, 0, 0);
+    const tileset = map.addTilesetImage('tiles', KEYS.TILES, TILE_SIZE, TILE_SIZE, 0, 0);
     const ground = map.createLayer(0, tileset, 0, 0);
     ground.setDepth(-1000);
+    ground.setLighting?.(true);
 
+    // Object layer holds FLAT, collidable map objects (water, building walls).
+    // Tall props (trees, planters) become Y-sorted SPRITES instead, so the
+    // player can pass in front of and behind them (criterion #6).
     const objects = map.createBlankLayer('objects', tileset, 0, 0);
+    this.treeSprites = [];
+    this.lampPositions = [];
     for (let y = 0; y < CITY.height; y++) {
       for (let x = 0; x < CITY.width; x++) {
         const idx = CITY.objects[y][x];
-        if (idx !== -1) objects.putTileAt(idx, x, y);
+        if (idx === -1) continue;
+        if (idx === TILES.TREE || idx === TILES.PLANTER) {
+          this.spawnTallProp(idx, x, y);
+        } else {
+          objects.putTileAt(idx, x, y);
+        }
       }
     }
     objects.setCollision(COLLIDING_TILES, true);
-    // Objects depth-sort with the world so the player can pass behind tall bits.
     objects.setDepth(0);
+    objects.setLighting?.(true);
 
     this.map = map;
     this.objectLayer = objects;
 
+    // Park rect (for ambient leaf particles), in world pixels.
+    this.parkRect = { x: 37 * TILE_SIZE, y: 28 * TILE_SIZE, w: 11 * TILE_SIZE, h: 8 * TILE_SIZE };
+
     this.addBuildingLabels();
+    this.buildForeground();
+  }
+
+  // A tall prop (tree/planter) as a Y-sorted static sprite with a small foot
+  // collider, so depth-sorting puts the player in front when below / behind
+  // when above.
+  spawnTallProp(tileIdx, tx, ty) {
+    const wx = tx * TILE_SIZE + TILE_SIZE / 2;
+    const wy = ty * TILE_SIZE + TILE_SIZE / 2;
+    const spr = this.add.sprite(wx, wy, KEYS.TILES, tileIdx);
+    spr.setDepth(wy);
+    spr.setLighting?.(true);
+    this.physics.add.existing(spr, true);
+    spr.body.setSize(10, 6);
+    spr.body.setOffset(3, 10);
+    this.treeSprites.push(spr);
+    if (tileIdx === TILES.TREE) {
+      const sh = this.add.image(wx, wy + 6, KEYS.SHADOW).setDepth(wy - 1).setScale(1.2);
+      sh.setLighting?.(false);
+    }
+  }
+
+  // Foreground occlusion: an awning over each building door, rendered above the
+  // player so they pass BEHIND it.
+  buildForeground() {
+    this.foreground = [];
+    CITY.buildings.forEach((b) => {
+      const ax = b.door.x * TILE_SIZE + TILE_SIZE / 2;
+      const ay = (b.door.y - 1) * TILE_SIZE + TILE_SIZE / 2;
+      const awn = this.add.rectangle(ax, ay - 2, TILE_SIZE + 6, 5, b.color, 1).setDepth(900200);
+      awn.setStrokeStyle(1, 0x000000, 0.3);
+      this.foreground.push(awn);
+      this.lampPositions.push({ x: ax, y: ay - 8 });
+    });
   }
 
   // Color each building's wall block by tinting tiles, and float a name label.
@@ -126,12 +191,17 @@ export default class WorldScene extends Phaser.Scene {
   }
 
   createNPCs() {
-    this.npcs = NPCS.map((data) => new NPC(this, data).placeAtTile(data.tileX, data.tileY));
+    this.npcs = NPCS.map((data) => {
+      const npc = new NPC(this, data).placeAtTile(data.tileX, data.tileY);
+      npc.enableLighting?.();
+      return npc;
+    });
   }
 
   setupCollision() {
     this.physics.add.collider(this.player, this.objectLayer);
     this.npcs.forEach((npc) => this.physics.add.collider(this.player, npc));
+    this.treeSprites.forEach((t) => this.physics.add.collider(this.player, t));
   }
 
   setupCamera() {
@@ -139,7 +209,32 @@ export default class WorldScene extends Phaser.Scene {
     const cam = this.cameras.main;
     cam.setBounds(0, 0, CITY.pixelWidth, CITY.pixelHeight);
     cam.roundPixels = true;
-    cam.startFollow(this.player, true, 0.12, 0.12);
+    // Eased follow with a small deadzone so the camera lags slightly then
+    // catches up, instead of locking rigidly (animation juice, criterion #9).
+    cam.startFollow(this.player, true, 0.09, 0.09);
+    cam.setDeadzone(24, 18);
+  }
+
+  // Build the full graphics atmosphere (lighting, grade, particles, post-fx).
+  setupAtmosphere() {
+    // Streetlamps along the two main avenues.
+    const lamps = [...this.lampPositions];
+    const windows = [];
+    CITY.buildings.forEach((b) => {
+      windows.push({ x: b.center.x * TILE_SIZE, y: (b.rect.y + 1) * TILE_SIZE, color: b.color });
+    });
+    this.atmo = new Atmosphere(this, {
+      player: this.player,
+      lamps,
+      windows,
+      litLayers: [this.objectLayer],
+    });
+    this.atmo.setWeather(this.gs.data.weather);
+  }
+
+  // 0=midnight, 0.5=noon - drives the day/night system.
+  dayFraction() {
+    return (this.gs.hour * 60 + this.gs.minute) / (TIME.HOURS_PER_DAY * 60);
   }
 
   // --- World clock ----------------------------------------------------------
@@ -171,7 +266,10 @@ export default class WorldScene extends Phaser.Scene {
 
   // WorldScene is the SINGLE keyboard owner. Based on the UI mode it either
   // drives the open dialogue/menu/phone, or drives world movement+interaction.
-  update() {
+  update(time, delta) {
+    // Drive the whole graphics atmosphere from the clock every frame.
+    if (this.atmo) this.atmo.update(this.dayFraction());
+
     const confirm = this.input_.confirmJustPressed();
     const nav = this.input_.navJustPressed();
     const cancel = this.input_.cancelJustPressed();
@@ -205,16 +303,40 @@ export default class WorldScene extends Phaser.Scene {
     // mode === 'none': normal gameplay.
     this.player.unfreeze();
     if (this.input_.sleepJustPressed()) this.trySleep();
-    if (confirm) this.tryInteract();
-    // tryInteract may have opened a dialogue; only move if still free.
-    if (this.ui.mode === 'none') this.player.update(this.input_.axis());
-    else this.player.freeze();
+
+    // During a dog walk the player MOVES FREELY (real navigation); Space is
+    // routed to the activity first (clean up / hold leash / hand back dog).
+    if (this.dogWalk.active) {
+      if (confirm && this.dogWalk.onConfirm()) {
+        // handled by the activity
+      } else if (confirm) {
+        this.tryInteract();
+      }
+      this.dogWalk.update(delta);
+    } else if (confirm) {
+      this.tryInteract();
+    }
+
+    // Move unless an interaction opened a blocking UI this frame.
+    if (this.ui.mode === 'none') {
+      const axis = this.input_.axis();
+      this.player.update(axis);
+      // Foot dust while actually walking on the ground.
+      if ((axis.x || axis.y) && this.atmo && time - (this._lastPuff || 0) > 180) {
+        this._lastPuff = time;
+        this.atmo.puffDust(this.player.x, this.player.y + 7);
+      }
+    } else {
+      this.player.freeze();
+    }
     this.updateMarkers();
   }
 
   // --- Interaction ----------------------------------------------------------
 
   tryInteract() {
+    // Picking up a booked dog at the client's door takes priority.
+    if (this.checkDogPickup()) return;
     const npc = this.getFacingNPC();
     if (!npc) return;
     this.dispatchInteraction(npc);
@@ -258,7 +380,8 @@ export default class WorldScene extends Phaser.Scene {
     }
   }
 
-  // Job offer for a single job (cafe barista).
+  // Job offer for a single job (cafe barista). The cafe also serves food, so
+  // the player can buy a meal here to clear hunger.
   offerJob(jobId) {
     const job = JOBS[jobId];
     const current = this.gs.data.job?.id;
@@ -268,24 +391,156 @@ export default class WorldScene extends Phaser.Scene {
     } else {
       options.push({ label: `Take the job (${job.title})`, onSelect: () => { this.gs.setJob(jobId); this.toast(`Hired as ${job.title}!`); } });
     }
+    if (jobId === 'cafe') {
+      options.push({
+        label: 'Grab a meal  $12',
+        onSelect: () => {
+          if (this.gs.eat()) this.toast('You eat. Hunger cleared.', PALETTE.money);
+          else this.toast('Not enough cash to eat!', PALETTE.danger);
+        },
+      });
+    }
     options.push({ label: 'Maybe later', onSelect: () => {} });
     this.ui.openMenu(job.title, [job.blurb, `$${job.dailyWage}/day`], options);
   }
 
-  // Gig board: pick delivery / dogwalk / busker.
+  // Gig board (the dispatcher / "gig app"). Dog-walking is the realistic
+  // procedural gig; the others remain simple clock-in jobs for now (they
+  // convert to procedural activities in MA.06.12.01).
   openJobBoard() {
-    const gigs = ['delivery', 'dogwalk', 'busker'];
-    const options = gigs.map((id) => ({
-      label: `${JOBS[id].title}  $${JOBS[id].dailyWage}/day`,
-      onSelect: () => {
-        this.gs.setJob(id);
-        this.toast(`Now working: ${JOBS[id].title}`);
-        // Offer to work a shift right away.
-        this.time.delayedCall(50, () => this.offerShiftPrompt(id));
+    const rating = this.gs.data.dogRating.toFixed(1);
+    const options = [
+      {
+        label: `Dog Walking  (rating ${rating}/5)`,
+        onSelect: () => this.lookForDogWalk(),
       },
-    }));
+      {
+        label: 'Buy poop bags  $' + 5,
+        onSelect: () => {
+          if (this.gs.buyBags()) this.toast(`Bought bags (have ${this.gs.data.poopBags}).`, PALETTE.money);
+          else this.toast('Not enough cash!', PALETTE.danger);
+        },
+      },
+    ];
+    ['delivery', 'busker'].forEach((id) => {
+      options.push({
+        label: `${JOBS[id].title}  $${JOBS[id].dailyWage}/day`,
+        onSelect: () => {
+          this.gs.setJob(id);
+          this.toast(`Now working: ${JOBS[id].title}`);
+          this.time.delayedCall(50, () => this.offerShiftPrompt(id));
+        },
+      });
+    });
     options.push({ label: 'Never mind', onSelect: () => {} });
-    this.ui.openMenu('Gig Board', ['No contract, daily pay.', 'Pick a gig:'], options);
+    this.ui.openMenu('Gig App', [
+      `Bags: ${this.gs.data.poopBags}   Dog rating: ${rating}/5`,
+      'Look for work - no guarantee of a client.',
+    ], options);
+  }
+
+  // STEP 1: availability roll. Sometimes there is no client (real precarity).
+  lookForDogWalk() {
+    if (this.dogWalk.active || this.pendingBooking) {
+      this.toast('You already have a dog to walk!', PALETTE.danger);
+      return;
+    }
+    const ctx = {
+      reputation: this.gs.data.stats.reputation,
+      gigRating: this.gs.data.dogRating,
+      hour: this.gs.hour,
+      weather: this.gs.data.weather,
+    };
+    const roll = rollAvailability(ctx, DOGWALK_CFG);
+    // Looking for work costs a little time either way.
+    this.gs.advanceMinutes(10);
+
+    if (!roll.available) {
+      this.ui.openMenu('Gig App', [
+        'No clients available right now.',
+        'Try again later, or do something else.',
+      ], [{ label: 'OK', onSelect: () => {} }]);
+      return;
+    }
+
+    // STEP 2: a booking. Pick a client building (not your apartment).
+    const candidates = CITY.buildings.filter((b) => b.id !== 'apartment');
+    const client = Phaser.Utils.Array.GetRandom(candidates);
+    const dogName = Phaser.Utils.Array.GetRandom(DOGWALK_CFG.dogNames);
+    this.pendingBooking = {
+      dogName,
+      fee: roll.fee,
+      durationMin: roll.durationMin,
+      clientMood: roll.clientMood,
+      doorX: client.door.x,
+      doorY: client.door.y,
+      clientLabel: client.label,
+    };
+
+    this.ui.openMenu('New Booking!', [
+      `${dogName} needs a ${roll.durationMin}-min walk.`,
+      `Client: ${client.label}`,
+      `Pay: $${roll.fee}   Dog: ${roll.clientMood}`,
+    ], [
+      {
+        label: 'Accept & head there',
+        onSelect: () => {
+          this.setObjective(client.door.x, client.door.y, `Pick up ${dogName}`);
+          this.toast(`Go to ${client.label} to pick up ${dogName}.`, PALETTE.accent);
+        },
+      },
+      { label: 'Decline', onSelect: () => { this.pendingBooking = null; } },
+    ]);
+  }
+
+  // STEP 3: pickup. Called from tryInteract when at the booking's door.
+  checkDogPickup() {
+    if (!this.pendingBooking || this.dogWalk.active) return false;
+    const px = Math.floor(this.player.x / TILE_SIZE);
+    const py = Math.floor(this.player.y / TILE_SIZE);
+    const b = this.pendingBooking;
+    if (Math.abs(px - b.doorX) <= 1 && Math.abs(py - b.doorY) <= 1) {
+      const booking = this.pendingBooking;
+      this.pendingBooking = null;
+      this.clearObjective();
+      this.dogWalk.begin(booking);
+      return true;
+    }
+    return false;
+  }
+
+  // --- Objective marker (a pulsing waypoint + offscreen arrow) --------------
+  setObjective(tileX, tileY, label) {
+    this.clearObjective();
+    const wx = tileX * TILE_SIZE + TILE_SIZE / 2;
+    const wy = tileY * TILE_SIZE + TILE_SIZE / 2;
+    const ring = this.add.circle(wx, wy, 8, PALETTE.accent, 0).setStrokeStyle(2, PALETTE.accent).setDepth(900100);
+    const lbl = this.add.text(wx, wy - 14, label, {
+      fontFamily: FONT_FAMILY, fontSize: '6px', color: '#ffffff',
+      backgroundColor: '#000000aa', padding: { x: 2, y: 1 },
+    }).setOrigin(0.5, 1).setDepth(900101);
+    this.tweens.add({ targets: ring, scale: 1.6, alpha: 0.2, duration: 800, yoyo: true, repeat: -1 });
+    this.objective = { ring, lbl, x: wx, y: wy };
+  }
+
+  clearObjective() {
+    if (this.objective) {
+      this.objective.ring.destroy();
+      this.objective.lbl.destroy();
+      this.objective = null;
+    }
+  }
+
+  // STEP 6: result card after the walk resolves (called by DogWalk.finish).
+  showWalkResult(r) {
+    const stars = '*'.repeat(r.stars) + '.'.repeat(5 - r.stars);
+    const trend = r.newRating >= r.oldRating ? 'up' : 'down';
+    this.ui.openMenu(`${r.dogName}: ${r.tier.toUpperCase()}`, [
+      `Rating: ${stars}`,
+      `Fee $${r.fee}  +Tip $${r.tip}  = $${r.total}`,
+      `"${r.review}"`,
+      `Dog rep ${r.oldRating.toFixed(1)} -> ${r.newRating.toFixed(1)} (${trend})`,
+    ], [{ label: 'Done', onSelect: () => {} }]);
   }
 
   offerShiftPrompt(jobId) {
@@ -363,6 +618,8 @@ export default class WorldScene extends Phaser.Scene {
     this.gs.changeStat(job.trains, 1);
     if (this.gs.data.job) this.gs.data.job.shiftsWorked++;
     this.toast(`Shift done! +$${bonus}`, PALETTE.money);
+    // Boss pressure: a poor shift counts as a strike (warn -> fire).
+    if (score < 0.3) this.gs.recordJobProblem();
   }
 
   trySleep() {
@@ -370,7 +627,8 @@ export default class WorldScene extends Phaser.Scene {
     const ptx = Math.floor(this.player.x / TILE_SIZE);
     const pty = Math.floor(this.player.y / TILE_SIZE);
     const near = Math.abs(ptx - apt.door.x) <= 1 && Math.abs(pty - apt.door.y) <= 1;
-    if (!near) {
+    // Evicted players can sleep rough anywhere (but rest poorly - see sleep()).
+    if (!near && !this.gs.data.evicted) {
       this.toast('Find your apartment door to sleep (Z).');
       return;
     }

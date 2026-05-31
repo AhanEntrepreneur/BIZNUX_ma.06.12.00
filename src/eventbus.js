@@ -26,4 +26,8 @@ export const EVENTS = {
   // Minigame (work shift)
   START_SHIFT: 'shift:start', // { jobId }
   END_SHIFT: 'shift:end', // { jobId, score }
+  // Dog-walk activity
+  WALK_PROGRESS: 'walk:progress', // { elapsed, duration }
+  // Objective marker (waypoint on the map)
+  OBJECTIVE_SET: 'objective:set', // { x, y, label } | null to clear
 };

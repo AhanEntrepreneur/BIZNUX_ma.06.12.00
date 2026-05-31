@@ -1,20 +1,20 @@
 import Phaser from 'phaser';
 import { CHAR } from '../config.js';
+import { KEYS } from '../data/assetManifest.js';
 import { FACE_TINTS, HAIR_COLORS, OUTFITS } from '../data/appearance.js';
 
-// A layered, appearance-driven character.
+// A layered, appearance-driven character - a 4-piece PAPER DOLL.
 //
-// IMPORTANT: this extends a plain Sprite (the BODY layer) rather than a
-// Container, because Phaser's arcade physics doesn't play nicely with Containers
-// (static bodies call getTopLeft(), which Containers lack). Hair and outfit are
-// separate overlay Sprites that simply MIRROR the body's current frame, position,
-// depth and scale every tick - so only the body animates, and the overlays stay
-// perfectly in sync without their own animation state.
+// Extends a plain Sprite (the BODY layer, which carries the physics body in
+// subclasses), because Phaser arcade physics doesn't work on Containers.
+// Bottoms / top / hair are overlay Sprites that MIRROR the body's frame,
+// position, depth and scale every tick, so only the body animates and the
+// overlays stay in sync. A soft drop-shadow sprite sits beneath the feet.
 //
-// Subclasses (Player, NPC) attach the physics body to `this` (the body sprite).
+// Layer draw order (bottom -> top): shadow, body, bottoms, top, hair.
 export default class CharacterSprite extends Phaser.Physics.Arcade.Sprite {
   constructor(scene, x, y, appearance) {
-    const bodyKey = 'char_body_' + (appearance.body === 'fem' ? 'fem' : 'masc');
+    const bodyKey = appearance.body === 'fem' ? KEYS.BODY_FEM : KEYS.BODY_MASC;
     const startFrame = CHAR.DIRECTION_OFFSET[appearance.facing || 'down'];
     super(scene, x, y, bodyKey, startFrame);
     scene.add.existing(this);
@@ -22,33 +22,35 @@ export default class CharacterSprite extends Phaser.Physics.Arcade.Sprite {
     this.facing = appearance.facing || 'down';
     this.bodyKey = bodyKey;
 
-    const hairKey = 'char_hair_' + (appearance.hair ?? 0);
     const outfit = OUTFITS[appearance.outfit ?? 0] || OUTFITS[0];
-    const outfitKey = 'char_outfit_' + outfit.variant;
+    const bottomsKey = KEYS.BOTTOMS + outfit.bottoms;
+    const topKey = KEYS.TOP + outfit.top;
+    const hairKey = KEYS.HAIR + (appearance.hair ?? 0);
 
-    // Overlay sprites (no physics, no animation - they mirror the body).
-    this.outfit_ = scene.add.sprite(x, y, outfitKey, startFrame);
+    // Drop shadow (on the ground; does not bob with the sprite).
+    this.shadow = scene.add.image(x, y, KEYS.SHADOW);
+    this.shadow.setOrigin(0.5, 0.5);
+
+    // Overlay layers (no physics, no animation; mirror the body each tick).
+    this.bottoms_ = scene.add.sprite(x, y, bottomsKey, startFrame);
+    this.top_ = scene.add.sprite(x, y, topKey, startFrame);
     this.hair_ = scene.add.sprite(x, y, hairKey, startFrame);
 
-    // Tints: face -> body skin, hairColor -> hair, outfit color -> clothes.
-    // (An NPC `tint` overrides body tint for quick visual variety.)
-    // Phaser 4: be explicit about tint mode (MULTIPLY) so recoloring of the
-    // white overlay sheets stays correct under the new default and composes
-    // properly once the lighting system multiplies light over sprites.
+    // Tints (MULTIPLY in v4): face->skin, outfit->clothes, hairColor->hair.
     const TM = Phaser.TintMode?.MULTIPLY ?? 0;
-    this.setTint(appearance.tint ?? FACE_TINTS[appearance.face ?? 0]);
-    this.setTintMode?.(TM);
-    this.hair_.setTint(HAIR_COLORS[appearance.hairColor ?? 0]);
-    this.hair_.setTintMode?.(TM);
-    this.outfit_.setTint(outfit.color);
-    this.outfit_.setTintMode?.(TM);
+    const apply = (spr, color) => { spr.setTint(color); spr.setTintMode?.(TM); };
+    apply(this, appearance.tint ?? FACE_TINTS[appearance.face ?? 0]);
+    apply(this.bottoms_, outfit.botColor);
+    apply(this.top_, outfit.topColor);
+    apply(this.hair_, HAIR_COLORS[appearance.hairColor ?? 0]);
 
-    this.overlays = [this.outfit_, this.hair_];
+    // Order matters: bottoms, then top, then hair on top of the body.
+    this.overlays = [this.bottoms_, this.top_, this.hair_];
+
     CharacterSprite.createAnimations(scene, bodyKey);
     this.syncOverlays();
   }
 
-  // Walk anims are defined on the BODY texture only (overlays mirror frames).
   static createAnimations(scene, bodyKey) {
     const dirs = ['down', 'left', 'right', 'up'];
     dirs.forEach((dir) => {
@@ -74,18 +76,33 @@ export default class CharacterSprite extends Phaser.Physics.Arcade.Sprite {
     }
   }
 
-  // Mirror body transform + current frame onto the overlays. Called every tick.
+  // Mirror the body's transform + frame onto every overlay, and keep the
+  // shadow planted at the feet. Called every tick via preUpdate.
   syncOverlays() {
     const frameName = this.frame.name;
-    for (const o of this.overlays) {
+    const sx = this.scaleX;
+    const sy = this.scaleY;
+    for (let i = 0; i < this.overlays.length; i++) {
+      const o = this.overlays[i];
       o.setPosition(this.x, this.y);
       o.setFrame(frameName);
-      o.setDepth(this.depth + 0.01);
-      o.setScale(this.scaleX, this.scaleY);
+      o.setScale(sx, sy);
       o.setVisible(this.visible);
+      // bottoms just above body, top above bottoms, hair above top
+      o.setDepth(this.depth + 0.01 * (i + 1));
     }
-    // hair sits above outfit
-    this.hair_.setDepth(this.depth + 0.02);
+    // Shadow sits slightly below the feet, under everything.
+    this.shadow.setPosition(this.x, this.y + 7 * Math.abs(sy));
+    this.shadow.setScale(sx, sy);
+    this.shadow.setDepth(this.depth - 1);
+    this.shadow.setVisible(this.visible);
+  }
+
+  // Opt this character (all layers) into the lighting system.
+  enableLighting() {
+    this.setLighting?.(true);
+    this.overlays.forEach((o) => o.setLighting?.(true));
+    return this;
   }
 
   preUpdate(time, delta) {
@@ -94,6 +111,7 @@ export default class CharacterSprite extends Phaser.Physics.Arcade.Sprite {
   }
 
   destroy(fromScene) {
+    this.shadow?.destroy();
     this.overlays?.forEach((o) => o.destroy());
     super.destroy(fromScene);
   }

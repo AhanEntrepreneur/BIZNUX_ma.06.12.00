@@ -26,12 +26,16 @@ export const HAIR_COLORS = [
   0xd8c64a, 0x9a9a9a, 0xb5443a,
 ];
 
-// Starter outfits: each picks an art variant (cut) + a tint (color) + category.
+// Starter outfits. Each outfit is now a full top + bottoms combo (paper-doll):
+//   top/topColor    -> the shirt/jacket layer (cut variant + tint)
+//   bottoms/botColor -> the TROUSERS layer (cut variant + tint)  [Bug 1 fix]
+// `formal` will matter for interviews/meetings in a later version.
 export const OUTFITS = [
-  { id: 0, variant: 0, color: 0x3d7de0, label: 'Blue Tee', formal: false },
-  { id: 1, variant: 0, color: 0x4caf50, label: 'Green Tee', formal: false },
-  { id: 2, variant: 1, color: 0xb5443a, label: 'Red Polo', formal: false },
-  { id: 3, variant: 2, color: 0x33363f, label: 'Grey Jacket', formal: false },
+  { id: 0, label: 'Blue Tee',    top: 0, topColor: 0x3d7de0, bottoms: 1, botColor: 0x2b3a55, formal: false },
+  { id: 1, label: 'Green Tee',   top: 0, topColor: 0x4caf50, bottoms: 1, botColor: 0x3a3f2b, formal: false },
+  { id: 2, label: 'Red Polo',    top: 1, topColor: 0xb5443a, bottoms: 2, botColor: 0x4a4f5a, formal: false },
+  { id: 3, label: 'Grey Jacket', top: 2, topColor: 0x33363f, bottoms: 2, botColor: 0x222530, formal: true },
+  { id: 4, label: 'Summer',      top: 3, topColor: 0xe0c84a, bottoms: 0, botColor: 0x6b5a8a, formal: false },
 ];
 
 export const DEFAULT_APPEARANCE = {

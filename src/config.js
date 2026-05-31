@@ -26,10 +26,52 @@ export const TIME = {
 };
 
 // --- Economy ----------------------------------------------------------------
+// Tuned toward the "always slightly squeezed" principle: obligations drain on a
+// schedule whether or not the week went well.
 export const ECONOMY = {
   STARTING_CASH: 500,
-  DAILY_RENT: 40, // charged at midnight if you don't own a home
-  RENT_GRACE_DAYS: 0,
+
+  // Rent: charged daily at midnight if you don't own a home.
+  DAILY_RENT: 40,
+  RENT_MISS_LIMIT: 3, // missed rent days before eviction
+
+  // One starter loan (EMI) the player carries from day one.
+  LOAN_PRINCIPAL: 600, // a small debt that funded the move to the city
+  EMI_AMOUNT: 55, // due on a monthly schedule
+  EMI_INTERVAL_DAYS: 7, // "monthly" = every in-game week for a brisk loop
+  EMI_MISS_LIMIT: 3, // missed EMIs before default escalation
+
+  // Basic recurring bills (drain on a schedule).
+  PHONE_BILL: 18,
+  UTILITIES_BILL: 25,
+  BILL_INTERVAL_DAYS: 7,
+
+  // Food / hunger: not eating worsens fatigue/performance.
+  MEAL_COST: 12,
+  HUNGER_PER_GAME_HOUR: 4, // 0..100; high hunger penalizes
+  HUNGER_HIGH: 70,
+
+  // Credit score band.
+  CREDIT_START: 600,
+  CREDIT_MIN: 300,
+  CREDIT_MAX: 850,
+
+  // Consumable: poop bags for dog-walking cleanups.
+  POOP_BAG_COST: 5,
+  POOP_BAGS_PER_PACK: 5,
+  STARTING_BAGS: 3,
+
+  // Eviction housing penalty.
+  EVICTED_FATIGUE_FLOOR: 25, // street sleep never fully rests you
+};
+
+// Dog-walking gig tuning (drives the LuckEngine availability/booking rolls).
+export const DOGWALK_CFG = {
+  baseRate: 0.55, // base chance a client exists when you look
+  baseFee: 35,
+  feeSpread: 45, // fee = base + quality*spread
+  durations: [10, 15, 20], // in-game minutes
+  dogNames: ['Buddy', 'Bella', 'Max', 'Coco', 'Rex', 'Luna', 'Charlie', 'Daisy'],
 };
 
 // --- Player movement (analog, any-direction) --------------------------------

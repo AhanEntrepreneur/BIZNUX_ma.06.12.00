@@ -1,36 +1,44 @@
 // ---------------------------------------------------------------------------
-// Programmatic placeholder pixel art (zero downloads for v1).
+// Procedural placeholder art generator (Phaser 4 canvas textures).
 //
-// Produces canvas-backed textures shaped exactly like real assets would be:
-//   - tiles:        a horizontal strip of 16x16 tiles, indexed by TILES.*
-//   - char_body:    4 dir x 3 frames of a bare body (skin), per body type
-//   - char_hair:    matching sheet of just-hair overlays (tintable)
-//   - char_outfit:  matching sheet of just-clothes overlays (tintable)
+// TEMPORARY ART: these are cohesive, roughly top-down placeholders meant to be
+// replaced by the purchased LimeZu Modern packs via the keyed asset pipeline
+// (see data/assetManifest.js). They are intentionally NOT gold-plated.
 //
-// The character is drawn in THREE layered sheets so the engine can stack
-// body + hair + outfit and recolor each independently - exactly the layering
-// the spec calls for. Real art swaps in via USE_PLACEHOLDER_ART (config.js).
+// The character is a 4-LAYER paper doll, each layer a 4-dir x 3-frame sheet:
+//   body  -> skin + head + eyes      (tinted by face)
+//   bottoms -> TROUSERS + shoes      (tinted by outfit)   <-- Bug 1 lives/dies here
+//   top   -> shirt/jacket            (tinted by outfit)
+//   hair  -> hairstyle               (tinted by hair color)
+// Layers are drawn white so a tint fully recolors them.
+//
+// generate(scene, genId, key) dispatches by the manifest's `gen` id.
 // ---------------------------------------------------------------------------
 import { TILE_SIZE, TILE_COUNT, TILES, CHAR, PALETTE } from '../config.js';
 
 function css(hex) {
-  return '#' + hex.toString(16).padStart(6, '0');
+  return '#' + (hex >>> 0).toString(16).padStart(6, '0').slice(-6);
 }
 function px(ctx, ox, oy, x, y, color, w = 1, h = 1) {
   ctx.fillStyle = css(color);
   ctx.fillRect(ox + x, oy + y, w, h);
 }
+function newCanvas(scene, key, w, h) {
+  const tex = scene.textures.createCanvas(key, w, h);
+  const ctx = tex.getContext();
+  ctx.imageSmoothingEnabled = false;
+  return { tex, ctx };
+}
 
-// --- Tiles -----------------------------------------------------------------
+// =========================================================================
+// TILES
+// =========================================================================
 function drawGrass(c, o, p) {
   px(c, o, p, 0, 0, PALETTE.grass, 16, 16);
-  [[3, 4], [10, 2], [6, 9], [13, 11], [2, 12], [8, 6]].forEach(([x, y]) =>
-    px(c, o, p, x, y, PALETTE.grassDark, 1, 2)
-  );
+  [[3, 4], [10, 2], [6, 9], [13, 11], [2, 12], [8, 6]].forEach(([x, y]) => px(c, o, p, x, y, PALETTE.grassDark, 1, 2));
 }
 function drawRoad(c, o, p) {
   px(c, o, p, 0, 0, PALETTE.road, 16, 16);
-  // faint center dashes drawn on the tile so long roads read as lanes
   px(c, o, p, 7, 2, PALETTE.roadLine, 2, 4);
   px(c, o, p, 7, 10, PALETTE.roadLine, 2, 4);
 }
@@ -76,144 +84,215 @@ function drawPlanter(c, o, p) {
   px(c, o, p, 4, 2, PALETTE.planter, 8, 8);
   px(c, o, p, 5, 1, PALETTE.planter, 6, 3);
 }
-
 const TILE_DRAWERS = {
-  [TILES.GRASS]: drawGrass,
-  [TILES.ROAD]: drawRoad,
-  [TILES.SIDEWALK]: drawSidewalk,
-  [TILES.WATER]: drawWater,
-  [TILES.TREE]: drawTree,
-  [TILES.PLAZA]: drawPlaza,
-  [TILES.WALL]: drawWall,
-  [TILES.CROSSWALK]: drawCrosswalk,
-  [TILES.PLANTER]: drawPlanter,
+  [TILES.GRASS]: drawGrass, [TILES.ROAD]: drawRoad, [TILES.SIDEWALK]: drawSidewalk,
+  [TILES.WATER]: drawWater, [TILES.TREE]: drawTree, [TILES.PLAZA]: drawPlaza,
+  [TILES.WALL]: drawWall, [TILES.CROSSWALK]: drawCrosswalk, [TILES.PLANTER]: drawPlanter,
 };
-
-export function generateTileset(scene, key) {
-  const width = TILE_COUNT * TILE_SIZE;
-  const tex = scene.textures.createCanvas(key, width, TILE_SIZE);
-  const ctx = tex.getContext();
-  ctx.imageSmoothingEnabled = false;
+function genTiles(scene, key) {
+  const { tex, ctx } = newCanvas(scene, key, TILE_COUNT * TILE_SIZE, TILE_SIZE);
   for (let i = 0; i < TILE_COUNT; i++) (TILE_DRAWERS[i] || drawGrass)(ctx, i * TILE_SIZE, 0);
   tex.refresh();
+  // Register per-tile frames so individual tiles can also be used as sprites
+  // (e.g. Y-sorted tree sprites for depth/occlusion).
+  for (let i = 0; i < TILE_COUNT; i++) tex.add(i, 0, i * TILE_SIZE, 0, TILE_SIZE, TILE_SIZE);
 }
 
-// --- Character layers ------------------------------------------------------
-// Shared frame walker: calls drawFn(ctx, ox, oy, dir, step) for all 12 frames
-// in the canonical order (down, left, right, up) x (idle, stepA, stepB), then
-// registers grid frames so the texture behaves like a loaded spritesheet.
+// =========================================================================
+// CHARACTER LAYERS (4 dir x 3 frames). Walk a frame grid + register frames.
+// =========================================================================
 function buildCharSheet(scene, key, drawFn) {
   const dirs = ['down', 'left', 'right', 'up'];
-  const steps = [0, 1, -1];
+  const steps = [0, 1, -1]; // idle, stepA, stepB
   const total = dirs.length * steps.length;
-  const tex = scene.textures.createCanvas(key, total * CHAR.FRAME_WIDTH, CHAR.FRAME_HEIGHT);
-  const ctx = tex.getContext();
-  ctx.imageSmoothingEnabled = false;
+  const { tex, ctx } = newCanvas(scene, key, total * CHAR.FRAME_WIDTH, CHAR.FRAME_HEIGHT);
   let f = 0;
-  dirs.forEach((dir) => {
-    steps.forEach((step) => {
-      drawFn(ctx, f * CHAR.FRAME_WIDTH, 0, dir, step);
-      f++;
-    });
-  });
+  dirs.forEach((dir) => steps.forEach((step) => { drawFn(ctx, f * CHAR.FRAME_WIDTH, 0, dir, step); f++; }));
   tex.refresh();
-  for (let i = 0; i < total; i++) {
-    tex.add(i, 0, i * CHAR.FRAME_WIDTH, 0, CHAR.FRAME_WIDTH, CHAR.FRAME_HEIGHT);
-  }
+  for (let i = 0; i < total; i++) tex.add(i, 0, i * CHAR.FRAME_WIDTH, 0, CHAR.FRAME_WIDTH, CHAR.FRAME_HEIGHT);
 }
-
-// Leg Y positions for a given walk step (shared by body + outfit so they sync).
+// Leg vertical offset per walk step (shared so bottoms + body align).
 function legYs(step) {
   return [12 + (step === 1 ? -1 : 0), 12 + (step === -1 ? -1 : 0)];
 }
 
-// Body: head + skin torso + legs + facing eyes. `fem` gives a slightly narrower
-// frame; otherwise identical. Drawn in white-ish skin so a tint can recolor it.
-function makeBodyDrawer(body) {
-  const narrow = body === 'fem';
+// BODY: head + skin torso + bare legs + eyes. Drawn in skin so face-tint works.
+function bodyDrawer(bodyType) {
+  const narrow = bodyType === 'fem';
   return (ctx, ox, oy, dir, step) => {
-    const skin = PALETTE.skin;
-    const shadow = PALETTE.skinShadow;
-    const eye = 0x101010;
-    const torsoX = narrow ? 6 : 5;
-    const torsoW = narrow ? 4 : 6;
-    // torso (bare; outfit layer covers it)
-    px(ctx, ox, oy, torsoX, 7, skin, torsoW, 5);
-    // head
-    px(ctx, ox, oy, 5, 2, skin, 6, 5);
-    px(ctx, ox, oy, 5, 6, shadow, 6, 1); // neck shade
-    // legs
-    const [ly1, ly2] = legYs(step);
-    px(ctx, ox, oy, 5, ly1, shadow, 2, 3);
-    px(ctx, ox, oy, 9, ly2, shadow, 2, 3);
-    // eyes per facing
-    if (dir === 'down') {
-      px(ctx, ox, oy, 6, 4, eye, 1, 1);
-      px(ctx, ox, oy, 9, 4, eye, 1, 1);
-    } else if (dir === 'left') {
-      px(ctx, ox, oy, 6, 4, eye, 1, 1);
-    } else if (dir === 'right') {
-      px(ctx, ox, oy, 9, 4, eye, 1, 1);
-    }
-    // up: no eyes (back of head)
+    const skin = 0xffffff; // tinted by face
+    const shade = 0xdddddd;
+    const eye = 0x202020;
+    const tx = narrow ? 6 : 5;
+    const tw = narrow ? 4 : 6;
+    px(ctx, ox, oy, tx, 7, skin, tw, 5); // torso (covered by top)
+    px(ctx, ox, oy, 5, 2, skin, 6, 5); // head
+    px(ctx, ox, oy, 5, 6, shade, 6, 1); // neck shade
+    const [ly1, ly2] = legYs(step); // bare legs (covered by bottoms)
+    px(ctx, ox, oy, 5, ly1, skin, 2, 3);
+    px(ctx, ox, oy, 9, ly2, skin, 2, 3);
+    if (dir === 'down') { px(ctx, ox, oy, 6, 4, eye, 1, 1); px(ctx, ox, oy, 9, 4, eye, 1, 1); }
+    else if (dir === 'left') px(ctx, ox, oy, 6, 4, eye, 1, 1);
+    else if (dir === 'right') px(ctx, ox, oy, 9, 4, eye, 1, 1);
   };
 }
 
-// Hair overlay: just the hair, white so it can be tinted to any hair color.
-// `style` slightly varies the silhouette. Drawn on its own transparent sheet.
-function makeHairDrawer(style) {
+// BOTTOMS: TROUSERS over the legs + shoes. White -> tinted by outfit.
+// THIS is the fix for Bug 1: the previous build had no trousers layer, so the
+// skin legs showed through. Now trousers fully cover the legs in all 4 dirs.
+function bottomsDrawer(variant) {
+  return (ctx, ox, oy, dir, step) => {
+    const cloth = 0xffffff; // tinted
+    const shoe = 0xcccccc;
+    const [ly1, ly2] = legYs(step);
+    // waistband
+    px(ctx, ox, oy, 5, 11, cloth, 6, 1);
+    // trouser legs (cover the body's skin legs, slightly taller)
+    px(ctx, ox, oy, 5, ly1, cloth, 2, 3);
+    px(ctx, ox, oy, 9, ly2, cloth, 2, 3);
+    // variant 0 = shorts (shorter), others full-length seam detail
+    if (variant === 1) { px(ctx, ox, oy, 6, ly1, shoe, 1, 3); px(ctx, ox, oy, 9, ly2, shoe, 1, 3); }
+    if (variant === 2) px(ctx, ox, oy, 5, 13, shoe, 6, 1); // cuff line
+    // shoes at the very bottom
+    px(ctx, ox, oy, 5, ly1 + 3, shoe, 2, 1);
+    px(ctx, ox, oy, 9, ly2 + 3, shoe, 2, 1);
+  };
+}
+
+// TOP: shirt/jacket over the torso. White -> tinted by outfit.
+function topDrawer(variant) {
+  return (ctx, ox, oy, dir, step) => {
+    const cloth = 0xffffff;
+    const shade = 0xdddddd;
+    px(ctx, ox, oy, 5, 7, cloth, 6, 5); // torso shirt
+    // sleeves nudge with the step for a hint of motion
+    const [ly1, ly2] = legYs(step);
+    px(ctx, ox, oy, 4, 7, cloth, 1, 3 + (ly1 === 11 ? 0 : 0));
+    px(ctx, ox, oy, 11, 7, cloth, 1, 3);
+    if (variant === 1) px(ctx, ox, oy, 5, 7, shade, 6, 1); // collar
+    if (variant === 2) px(ctx, ox, oy, 7, 7, shade, 2, 5); // jacket zipper
+    if (variant === 3) { px(ctx, ox, oy, 5, 9, shade, 6, 1); } // stripe
+    void ly2;
+  };
+}
+
+// HAIR: hairstyle silhouette. White -> tinted by hair color.
+function hairDrawer(style) {
   return (ctx, ox, oy, dir) => {
-    const hair = 0xffffff; // tinted at runtime
-    // base cap
+    const hair = 0xffffff;
     px(ctx, ox, oy, 5, 1, hair, 6, 2);
     px(ctx, ox, oy, 4, 1, hair, 1, 2);
     px(ctx, ox, oy, 11, 1, hair, 1, 2);
-    if (style % 3 === 1) {
-      // longer: sides down past the ears
-      px(ctx, ox, oy, 4, 3, hair, 1, 3);
-      px(ctx, ox, oy, 11, 3, hair, 1, 3);
-    }
-    if (style % 3 === 2) {
-      // spiky top
-      px(ctx, ox, oy, 6, 0, hair, 1, 1);
-      px(ctx, ox, oy, 9, 0, hair, 1, 1);
-    }
-    if (dir === 'up') {
-      // full back of head
-      px(ctx, ox, oy, 5, 2, hair, 6, 3);
-    } else if (dir === 'left') {
-      px(ctx, ox, oy, 5, 3, hair, 2, 1);
-    } else if (dir === 'right') {
-      px(ctx, ox, oy, 9, 3, hair, 2, 1);
-    }
+    if (style % 4 === 1) { px(ctx, ox, oy, 4, 3, hair, 1, 3); px(ctx, ox, oy, 11, 3, hair, 1, 3); } // long sides
+    if (style % 4 === 2) { px(ctx, ox, oy, 6, 0, hair, 1, 1); px(ctx, ox, oy, 9, 0, hair, 1, 1); } // spiky
+    if (style % 4 === 3) { px(ctx, ox, oy, 5, 0, hair, 6, 1); } // flat top
+    if (style >= 4) px(ctx, ox, oy, 4, 2, hair, 8, 1); // fuller variant
+    if (dir === 'up') px(ctx, ox, oy, 5, 2, hair, 6, 3);
+    else if (dir === 'left') px(ctx, ox, oy, 5, 3, hair, 2, 1);
+    else if (dir === 'right') px(ctx, ox, oy, 9, 3, hair, 2, 1);
   };
 }
 
-// Outfit overlay: shirt over torso + shoes, white so it tints to any color.
-// Variant changes the shirt cut so different outfit indices look different.
-function makeOutfitDrawer(variant) {
-  return (ctx, ox, oy, dir, step) => {
-    const c = 0xffffff; // tinted at runtime
-    // shirt over the torso
-    px(ctx, ox, oy, 5, 7, c, 6, 5);
-    if (variant === 1) px(ctx, ox, oy, 5, 7, 0xdddddd, 6, 1); // collar shade
-    if (variant === 2) px(ctx, ox, oy, 7, 7, 0xdddddd, 2, 5); // jacket seam
-    // shoes at the feet
-    const [ly1, ly2] = legYs(step);
-    px(ctx, ox, oy, 5, ly1 + 2, 0xdddddd, 2, 1);
-    px(ctx, ox, oy, 9, ly2 + 2, 0xdddddd, 2, 1);
-  };
+// =========================================================================
+// PROPS / FX (single textures)
+// =========================================================================
+function genShadow(scene, key) {
+  const { tex, ctx } = newCanvas(scene, key, 16, 8);
+  // soft ellipse: concentric translucent rings
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.ellipse(8, 4, 6, 2.5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.20)';
+  ctx.beginPath(); ctx.ellipse(8, 4, 7, 3.2, 0, 0, Math.PI * 2); ctx.fill();
+  tex.refresh();
+}
+function genDog(scene, key) {
+  // A small dog as a 4-dir x 3-frame sheet so it can face + trot.
+  buildCharSheet(scene, key, (ctx, ox, oy, dir, step) => {
+    const fur = 0xb5824a, dark = 0x8a6035, nose = 0x202020;
+    const bob = step === 1 ? -1 : 0;
+    px(ctx, ox, oy, 4, 9 + bob, fur, 8, 4); // body
+    px(ctx, ox, oy, 3, 10 + bob, dark, 1, 3); // tail
+    // head by facing
+    if (dir === 'down') { px(ctx, ox, oy, 6, 6 + bob, fur, 4, 4); px(ctx, ox, oy, 7, 8 + bob, nose, 2, 1); }
+    else if (dir === 'up') px(ctx, ox, oy, 6, 6 + bob, dark, 4, 4);
+    else if (dir === 'left') { px(ctx, ox, oy, 3, 7 + bob, fur, 4, 4); px(ctx, ox, oy, 3, 9 + bob, nose, 1, 1); }
+    else { px(ctx, ox, oy, 9, 7 + bob, fur, 4, 4); px(ctx, ox, oy, 12, 9 + bob, nose, 1, 1); }
+    px(ctx, ox, oy, 5, 12, dark, 1, 2); // legs
+    px(ctx, ox, oy, 10, 12, dark, 1, 2);
+  });
+}
+function genRaindrop(scene, key) {
+  const { tex, ctx } = newCanvas(scene, key, 2, 6);
+  px(ctx, 0, 0, 0, 0, 0xaad4ff, 1, 6);
+  px(ctx, 0, 0, 1, 1, 0xcce6ff, 1, 4);
+  tex.refresh();
+}
+function genDust(scene, key) {
+  const { tex, ctx } = newCanvas(scene, key, 4, 4);
+  ctx.fillStyle = 'rgba(220,210,190,0.9)';
+  ctx.beginPath(); ctx.arc(2, 2, 1.6, 0, Math.PI * 2); ctx.fill();
+  tex.refresh();
+}
+function genLeaf(scene, key) {
+  const { tex, ctx } = newCanvas(scene, key, 4, 4);
+  px(ctx, 0, 0, 1, 0, 0x3f8a33, 2, 1);
+  px(ctx, 0, 0, 0, 1, 0x4f9c3f, 4, 2);
+  px(ctx, 0, 0, 1, 3, 0x3f8a33, 2, 1);
+  tex.refresh();
+}
+function genPoop(scene, key) {
+  const { tex, ctx } = newCanvas(scene, key, 8, 8);
+  px(ctx, 0, 0, 2, 4, 0x5a3a1a, 4, 2);
+  px(ctx, 0, 0, 3, 2, 0x6b4423, 2, 2);
+  px(ctx, 0, 0, 3, 1, 0x6b4423, 1, 1);
+  // tiny stink marks
+  px(ctx, 0, 0, 1, 0, 0x9c8, 1, 1); px(ctx, 0, 0, 6, 1, 0x9c8, 1, 1);
+  tex.refresh();
+}
+function genPrompt(scene, key) {
+  // A small rounded key-bubble with an "E", the polished interaction prompt.
+  const { tex, ctx } = newCanvas(scene, key, 14, 16);
+  // bubble
+  ctx.fillStyle = css(PALETTE.accent);
+  ctx.fillRect(1, 1, 12, 12);
+  ctx.fillStyle = 'rgba(0,0,0,0.85)';
+  ctx.fillRect(2, 2, 10, 10);
+  ctx.fillStyle = css(PALETTE.accent);
+  // letter E
+  px(ctx, 0, 0, 4, 4, 0xffffff, 5, 1);
+  px(ctx, 0, 0, 4, 6, 0xffffff, 4, 1);
+  px(ctx, 0, 0, 4, 8, 0xffffff, 5, 1);
+  px(ctx, 0, 0, 4, 4, 0xffffff, 1, 5);
+  // little pointer tail at the bottom
+  ctx.fillStyle = css(PALETTE.accent);
+  ctx.fillRect(6, 13, 2, 2);
+  tex.refresh();
+}
+function genSpark(scene, key) {
+  const { tex, ctx } = newCanvas(scene, key, 4, 4);
+  ctx.fillStyle = css(PALETTE.accent);
+  px(ctx, 0, 0, 1, 0, PALETTE.accent, 2, 4);
+  px(ctx, 0, 0, 0, 1, PALETTE.accent, 4, 2);
+  tex.refresh();
 }
 
-// Build all character layer sheets. We bake one body sheet per body type under
-// keyed names, plus a hair sheet per style and an outfit sheet per variant, so
-// CharacterSprite can pick the right frames by appearance.
-export function generateCharacter(scene) {
-  // Bodies
-  buildCharSheet(scene, 'char_body_masc', makeBodyDrawer('masc'));
-  buildCharSheet(scene, 'char_body_fem', makeBodyDrawer('fem'));
-  // Hair styles 0..7 (silhouettes cycle every 3; color applied via tint)
-  for (let s = 0; s < 8; s++) buildCharSheet(scene, 'char_hair_' + s, makeHairDrawer(s));
-  // Outfit variants 0..2 (casual cuts; color applied via tint)
-  for (let v = 0; v < 3; v++) buildCharSheet(scene, 'char_outfit_' + v, makeOutfitDrawer(v));
+// =========================================================================
+// DISPATCH
+// =========================================================================
+export function generate(scene, genId, key) {
+  if (scene.textures.exists(key)) return; // real art already loaded
+  if (genId === 'tiles') return genTiles(scene, key);
+  if (genId.startsWith('body:')) return buildCharSheet(scene, key, bodyDrawer(genId.split(':')[1]));
+  if (genId.startsWith('bottoms:')) return buildCharSheet(scene, key, bottomsDrawer(+genId.split(':')[1]));
+  if (genId.startsWith('top:')) return buildCharSheet(scene, key, topDrawer(+genId.split(':')[1]));
+  if (genId.startsWith('hair:')) return buildCharSheet(scene, key, hairDrawer(+genId.split(':')[1]));
+  if (genId === 'shadow') return genShadow(scene, key);
+  if (genId === 'dog') return genDog(scene, key);
+  if (genId === 'raindrop') return genRaindrop(scene, key);
+  if (genId === 'dust') return genDust(scene, key);
+  if (genId === 'leaf') return genLeaf(scene, key);
+  if (genId === 'poop') return genPoop(scene, key);
+  if (genId === 'prompt') return genPrompt(scene, key);
+  if (genId === 'spark') return genSpark(scene, key);
+  console.warn('Unknown placeholder gen id:', genId);
 }

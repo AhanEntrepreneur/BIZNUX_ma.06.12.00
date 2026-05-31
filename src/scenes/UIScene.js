@@ -52,6 +52,8 @@ export default class UIScene extends Phaser.Scene {
     on(EVENTS.WEATHER_CHANGED, () => this.refreshHud());
     on(EVENTS.JOB_CHANGED, () => this.refreshPhone());
     on(EVENTS.TOAST, (p) => this.showToast(p.text, p.color));
+    // DogWalk (and other systems) can request a dialogue via the bus.
+    on(EVENTS.DIALOGUE_START, (p) => this.openDialogue(p));
   }
 
   // --- HUD ------------------------------------------------------------------
@@ -63,13 +65,16 @@ export default class UIScene extends Phaser.Scene {
     this.hudMoney = this.add.text(4, 4, '', { ...style, color: '#6ee06e' }).setDepth(11);
     this.hudClock = this.add.text(GAME_WIDTH / 2, 4, '', style).setOrigin(0.5, 0).setDepth(11);
     this.hudWeather = this.add.text(GAME_WIDTH - 4, 4, '', style).setOrigin(1, 0).setDepth(11);
+    this.displayedCash = this.gs.data ? this.gs.data.cash : 0; // for count-up
 
-    // Fatigue bar bottom-left (reserved-style mini gauge).
-    this.add.rectangle(4, GAME_HEIGHT - 10, 64, 6, PALETTE.panel, 0.9).setOrigin(0).setDepth(10);
-    this.fatigueBar = this.add.rectangle(5, GAME_HEIGHT - 9, 0, 4, PALETTE.danger).setOrigin(0).setDepth(11);
-    this.add
-      .text(70, GAME_HEIGHT - 10, 'FATIGUE', { fontFamily: FONT_FAMILY, fontSize: '6px', color: '#9aa0c0' })
-      .setDepth(11);
+    // Two stacked gauges bottom-left: FATIGUE and HUNGER.
+    this.add.rectangle(4, GAME_HEIGHT - 16, 64, 6, PALETTE.panel, 0.9).setOrigin(0).setDepth(10);
+    this.fatigueBar = this.add.rectangle(5, GAME_HEIGHT - 15, 0, 4, PALETTE.danger).setOrigin(0).setDepth(11);
+    this.add.text(70, GAME_HEIGHT - 16, 'FATIGUE', { fontFamily: FONT_FAMILY, fontSize: '6px', color: '#9aa0c0' }).setDepth(11);
+
+    this.add.rectangle(4, GAME_HEIGHT - 9, 64, 6, PALETTE.panel, 0.9).setOrigin(0).setDepth(10);
+    this.hungerBar = this.add.rectangle(5, GAME_HEIGHT - 8, 0, 4, PALETTE.accent).setOrigin(0).setDepth(11);
+    this.add.text(70, GAME_HEIGHT - 9, 'HUNGER', { fontFamily: FONT_FAMILY, fontSize: '6px', color: '#9aa0c0' }).setDepth(11);
 
     // Hint.
     this.add
@@ -78,11 +83,16 @@ export default class UIScene extends Phaser.Scene {
       })
       .setOrigin(1, 0)
       .setDepth(11);
+
+    // Offscreen objective arrow (points toward the current waypoint).
+    this.objArrow = this.add.text(0, 0, '>', {
+      fontFamily: FONT_FAMILY, fontSize: '10px', color: '#ffd24b',
+    }).setOrigin(0.5).setDepth(85).setVisible(false);
   }
 
   refreshHud() {
     if (!this.gs.data) return;
-    this.hudMoney.setText(`$${this.gs.data.cash}`);
+    // money handled via count-up in update(); set immediately if first time
     const hh = String(this.gs.hour).padStart(2, '0');
     const mm = String(this.gs.minute).padStart(2, '0');
     this.hudClock.setText(`Day ${this.gs.day}  ${hh}:${mm}`);
@@ -90,6 +100,44 @@ export default class UIScene extends Phaser.Scene {
     const f = this.gs.data.fatigue / 100;
     this.fatigueBar.width = 62 * f;
     this.fatigueBar.fillColor = f > 0.7 ? PALETTE.danger : f > 0.4 ? PALETTE.accent : PALETTE.money;
+    const hg = this.gs.data.hunger / 100;
+    this.hungerBar.width = 62 * hg;
+    this.hungerBar.fillColor = hg > 0.7 ? PALETTE.danger : hg > 0.4 ? PALETTE.accent : PALETTE.money;
+  }
+
+  // Per-frame: animate money count-up + update the offscreen objective arrow.
+  update() {
+    if (!this.gs.data) return;
+    // Money count-up.
+    const target = this.gs.data.cash;
+    if (this.displayedCash !== target) {
+      const diff = target - this.displayedCash;
+      const step = Math.max(1, Math.abs(diff) * 0.18);
+      this.displayedCash += Math.sign(diff) * Math.min(step, Math.abs(diff));
+      this.displayedCash = Math.round(this.displayedCash);
+    }
+    this.hudMoney.setText(`$${this.displayedCash}`);
+
+    // Objective arrow: point from screen-center toward an offscreen waypoint.
+    const world = this.scene.get('WorldScene');
+    const obj = world?.objective;
+    if (obj && world.cameras?.main) {
+      const cam = world.cameras.main;
+      const sx = (obj.x - cam.worldView.x) * cam.zoom;
+      const sy = (obj.y - cam.worldView.y) * cam.zoom;
+      const onScreen = sx >= 0 && sx <= GAME_WIDTH && sy >= 0 && sy <= GAME_HEIGHT;
+      if (onScreen) {
+        this.objArrow.setVisible(false);
+      } else {
+        const cx = GAME_WIDTH / 2, cy = GAME_HEIGHT / 2;
+        const ang = Math.atan2(sy - cy, sx - cx);
+        const rx = Math.cos(ang) * (GAME_WIDTH / 2 - 14) + cx;
+        const ry = Math.sin(ang) * (GAME_HEIGHT / 2 - 20) + cy;
+        this.objArrow.setPosition(rx, ry).setRotation(ang).setVisible(true);
+      }
+    } else {
+      this.objArrow.setVisible(false);
+    }
   }
 
   weatherIcon(w) {
@@ -112,14 +160,16 @@ export default class UIScene extends Phaser.Scene {
     if (!this.gs.data) return;
     const d = this.gs.data;
     this.phoneTitle.setText(`${d.name}'s Phone`);
-    const stats = STAT_KEYS.map((k) => `${k.toUpperCase().slice(0, 3)}  ${d.stats[k]}`).join('\n');
+    const stats = STAT_KEYS.map((k) => `${k.toUpperCase().slice(0, 3)} ${d.stats[k]}`).join('  ');
     const job = d.job ? d.job.id : 'unemployed';
-    const home = d.ownsHome ? 'Homeowner' : 'Renting ($40/day)';
+    const home = d.evicted ? 'EVICTED (street)' : d.ownsHome ? 'Homeowner' : 'Renting $40/day';
     this.phoneBody.setText(
       [
         `Cash: $${d.cash}`,
         `Job:  ${job}`,
         `Home: ${home}`,
+        `Loan: $${d.loanBalance}  Credit: ${d.creditScore}`,
+        `Dog rating: ${d.dogRating.toFixed(1)}/5  Bags: ${d.poopBags}`,
         '',
         stats,
       ].join('\n')

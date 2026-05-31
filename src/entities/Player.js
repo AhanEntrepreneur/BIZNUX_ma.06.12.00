@@ -21,6 +21,7 @@ export default class Player extends CharacterSprite {
   update(input) {
     if (this.frozen) {
       this.setVelocity(0, 0);
+      this.startIdleBreath();
       return;
     }
     let { x: ax, y: ay } = input;
@@ -34,11 +35,28 @@ export default class Player extends CharacterSprite {
       if (Math.abs(ax) > Math.abs(ay)) this.facing = ax < 0 ? 'left' : 'right';
       else this.facing = ay < 0 ? 'up' : 'down';
       this.setFacing(this.facing, true);
+      this.stopIdleBreath();
     } else {
       this.setVelocity(0, 0);
       this.setFacing(this.facing, false);
+      this.startIdleBreath();
     }
     this.setDepth(this.y);
+  }
+
+  // Gentle "breathing" while idle. Overlays mirror scaleY each tick, so the
+  // whole paper-doll breathes together (animation juice, criterion #9).
+  startIdleBreath() {
+    if (this.breathTween && this.breathTween.isPlaying()) return;
+    if (this.breathTween) this.breathTween.stop();
+    this.breathTween = this.scene.tweens.add({
+      targets: this, scaleY: 1.04, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.inOut',
+    });
+  }
+
+  stopIdleBreath() {
+    if (this.breathTween) { this.breathTween.stop(); this.breathTween = null; }
+    this.setScale(1, 1);
   }
 
   freeze() {
