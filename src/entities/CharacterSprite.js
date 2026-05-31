@@ -32,9 +32,16 @@ export default class CharacterSprite extends Phaser.Physics.Arcade.Sprite {
 
     // Tints: face -> body skin, hairColor -> hair, outfit color -> clothes.
     // (An NPC `tint` overrides body tint for quick visual variety.)
+    // Phaser 4: be explicit about tint mode (MULTIPLY) so recoloring of the
+    // white overlay sheets stays correct under the new default and composes
+    // properly once the lighting system multiplies light over sprites.
+    const TM = Phaser.TintMode?.MULTIPLY ?? 0;
     this.setTint(appearance.tint ?? FACE_TINTS[appearance.face ?? 0]);
+    this.setTintMode?.(TM);
     this.hair_.setTint(HAIR_COLORS[appearance.hairColor ?? 0]);
+    this.hair_.setTintMode?.(TM);
     this.outfit_.setTint(outfit.color);
+    this.outfit_.setTintMode?.(TM);
 
     this.overlays = [this.outfit_, this.hair_];
     CharacterSprite.createAnimations(scene, bodyKey);

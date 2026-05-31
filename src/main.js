@@ -19,7 +19,10 @@ GameState._jobsTable = JOBS;
 // Phaser game config. Retro look: low internal resolution scaled up, pixelArt +
 // roundPixels + nearest-neighbor -> crisp, never blurry. Top-down, no gravity.
 const gameConfig = {
-  type: Phaser.AUTO,
+  // Phaser 4: the lighting + unified Filter features are WebGL-only, so we
+  // require the WebGL renderer (AUTO would fall back to Canvas and silently
+  // drop all the post-processing). WEBGL throws loudly if unavailable.
+  type: Phaser.WEBGL,
   parent: 'game',
   width: GAME_WIDTH,
   height: GAME_HEIGHT,
