@@ -185,8 +185,10 @@ export default class Atmosphere {
       this.lights.setAmbientColor((r << 16) | (g << 8) | b);
       if (this.playerLight) {
         this.playerLight.setPosition(this.player.x, this.player.y);
-        // Only at night - no daytime floor (avoids a washed-out daytime blob).
-        this.playerLight.intensity = nightAmt * 1.6;
+        // Steep curve: the player's torch only matters in DEEP night, so dusk
+        // stays golden/clean instead of getting a colored halo around the
+        // player. nightAmt^3 is ~0 until it's genuinely dark.
+        this.playerLight.intensity = Math.pow(nightAmt, 3) * 1.8;
       }
     }
 
@@ -210,7 +212,8 @@ export default class Atmosphere {
     for (const s of this.glows) s.setAlpha(glowA);
     if (this.playerGlow) {
       this.playerGlow.setPosition(this.player.x, this.player.y);
-      this.playerGlow.setAlpha(glowA * 0.6);
+      // Match the light: only a faint personal glow in deep night.
+      this.playerGlow.setAlpha(Math.pow(nightAmt, 3) * 0.5);
     }
   }
 }
