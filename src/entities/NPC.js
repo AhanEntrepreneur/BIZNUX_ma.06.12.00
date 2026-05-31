@@ -1,4 +1,5 @@
-import { TILE_SIZE, FONT_FAMILY, PALETTE } from '../config.js';
+import { TILE_SIZE } from '../config.js';
+import { KEYS } from '../data/assetManifest.js';
 import CharacterSprite from './CharacterSprite.js';
 
 // An NPC: a layered character with a STATIC physics body (immovable obstacle)
@@ -25,14 +26,19 @@ export default class NPC extends CharacterSprite {
     this.dialogueKey = data.dialogue;
     this.setFacing(this.facing, false);
 
+    // Polished interaction prompt (Bug 2 fix): the "E" key-bubble sprite from
+    // the asset pipeline, gently bobbing, instead of a stray "!" glyph. Hidden
+    // until the player is in range.
     this.marker = scene.add
-      .text(0, 0, '!', {
-        fontFamily: FONT_FAMILY,
-        fontSize: '8px',
-        color: '#' + PALETTE.accent.toString(16).padStart(6, '0'),
-      })
+      .image(0, 0, KEYS.PROMPT)
       .setOrigin(0.5, 1)
+      .setDepth(950000)
       .setVisible(false);
+    this.markerBob = scene.tweens.add({
+      targets: this.marker, y: '-=2', duration: 520, yoyo: true, repeat: -1,
+      ease: 'Sine.inOut', paused: true,
+    });
+    this.marker.setLighting?.(false);
   }
 
   placeAtTile(tx, ty) {
@@ -46,11 +52,21 @@ export default class NPC extends CharacterSprite {
   }
 
   setMarkerVisible(v) {
+    if (v === this.marker.visible) {
+      if (v) this.marker.setPosition(this.x, this.y - 12).setDepth(this.y + 1000);
+      return;
+    }
     this.marker.setVisible(v);
-    if (v) this.marker.setPosition(this.x, this.y - 10).setDepth(this.y + 1000);
+    if (v) {
+      this.marker.setPosition(this.x, this.y - 12).setDepth(this.y + 1000);
+      this.markerBob.restart();
+    } else {
+      this.markerBob.pause();
+    }
   }
 
   destroy(fromScene) {
+    this.markerBob?.remove();
     this.marker?.destroy();
     super.destroy(fromScene);
   }
