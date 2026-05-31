@@ -13,7 +13,10 @@ export default class InputController {
       left: Phaser.Input.Keyboard.KeyCodes.A,
       right: Phaser.Input.Keyboard.KeyCodes.D,
     });
+    // Interact/confirm: E is the primary key (matches the on-screen "E"
+    // prompt); Space/Enter are alternates.
     this.confirmKeys = [
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.E),
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER),
     ];

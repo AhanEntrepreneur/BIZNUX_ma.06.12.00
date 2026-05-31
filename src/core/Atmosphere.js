@@ -51,15 +51,17 @@ export default class Atmosphere {
       this.litLayers.forEach((l) => l.setLighting && l.setLighting(true));
       if (this.player.enableLighting) this.player.enableLighting();
 
+      // Lamp/window lights are warm and gentle (Part 0.D), not blinding.
       this.pointLights = [];
       this.lampPositions.forEach((p) => {
-        this.pointLights.push(this.lights.addLight(p.x, p.y, 90, 0xffe7b0, 2.2));
+        this.pointLights.push(this.lights.addLight(p.x, p.y, 80, 0xffe7b0, 1.1));
       });
       this.windowPositions.forEach((p) => {
-        this.pointLights.push(this.lights.addLight(p.x, p.y, 70, p.color ?? 0xffd98a, 1.6));
+        this.pointLights.push(this.lights.addLight(p.x, p.y, 60, p.color ?? 0xffd98a, 0.8));
       });
-      // A soft light following the player; only meaningful at night.
-      this.playerLight = this.lights.addLight(this.player.x, this.player.y, 100, 0xbcd2ff, 0);
+      // A soft cool light following the player so their surroundings are always
+      // visible at night (Part 0.E). Intensity is driven in update().
+      this.playerLight = this.lights.addLight(this.player.x, this.player.y, 110, 0xcfe0ff, 0);
       this.lightingOk = true;
     } catch (e) {
       console.warn('Lighting unavailable, using glow fallback:', e && e.message);
@@ -103,13 +105,18 @@ export default class Atmosphere {
     }
     try {
       if (Phaser.Actions && Phaser.Actions.AddEffectBloom) {
-        Phaser.Actions.AddEffectBloom([cam], 0xffffff, 0.9, 0.9, 1.05, 0.6);
+        // Tasteful bloom (Part 0.D): high threshold so only genuinely bright
+        // pixels bloom, low strength so doors glow warmly instead of blinding.
+        // args: (objs, color, offsetX, offsetY, blurStrength, bloomStrength, steps, threshold?)
+        Phaser.Actions.AddEffectBloom([cam], 0xffffff, 0.8, 0.8, 0.5, 0.18);
       }
     } catch (e) {
       console.warn('Bloom unavailable (using glow sprites):', e && e.message);
     }
     try {
-      cam.filters.external.addVignette(0.5, 0.5, 0.78, 0.45);
+      // Soft vignette: large radius, low strength, so it frames without
+      // crushing the periphery into darkness (compounds with night ambient).
+      cam.filters.external.addVignette(0.5, 0.5, 0.95, 0.22);
     } catch (e) {
       console.warn('Vignette unavailable:', e && e.message);
     }
@@ -177,43 +184,50 @@ export default class Atmosphere {
     const sun = Math.max(0, Math.sin(t * Math.PI * 2 - Math.PI / 2) * 0.5 + 0.5);
     const nightAmt = 1 - sun;
 
-    // Ambient ramps from deep night-blue to full daylight.
+    // Ambient ramps from a NAVIGABLE night-blue (never near-black) to full
+    // daylight (Part 0.E). The floor is high enough to read the world at night.
     if (this.lightingOk) {
-      const r = Math.round(Phaser.Math.Linear(40, 255, sun));
-      const g = Math.round(Phaser.Math.Linear(48, 255, sun));
-      const b = Math.round(Phaser.Math.Linear(86, 255, sun));
+      // Night floor ~ (180,188,205): a clearly-readable blue dusk, not a cave.
+      const r = Math.round(Phaser.Math.Linear(180, 255, sun));
+      const g = Math.round(Phaser.Math.Linear(188, 255, sun));
+      const b = Math.round(Phaser.Math.Linear(205, 255, sun));
       this.lights.setAmbientColor((r << 16) | (g << 8) | b);
       if (this.playerLight) {
         this.playerLight.setPosition(this.player.x, this.player.y);
-        // Steep curve: the player's torch only matters in DEEP night, so dusk
-        // stays golden/clean instead of getting a colored halo around the
-        // player. nightAmt^3 is ~0 until it's genuinely dark.
-        this.playerLight.intensity = Math.pow(nightAmt, 3) * 1.8;
+        // Present across the whole night (squared, not cubed) so the player's
+        // immediate surroundings stay lit after dusk - gentle, not a spotlight.
+        this.playerLight.intensity = nightAmt * nightAmt * 0.9;
       }
     }
 
-    // Color grade: warm at golden hour, blue+dark at night, neutral midday.
+    // Color grade with a COMPRESSED amplitude (Part 0.E): day is bright but not
+    // clipped to white; night is a dim navigable blue dusk, never true black.
     if (this.filtersOk && this.grade) {
       const cm = this.grade;
       cm.reset();
-      cm.brightness(Phaser.Math.Linear(0.55, 1.05, sun));
-      cm.saturate(Phaser.Math.Linear(-0.15, 0.05, sun));
-      if (nightAmt > 0.02 && cm.night) cm.night(nightAmt * 0.35);
+      // brightness: 0.85 (night) -> 1.0 (midday). The grade ALWAYS runs (even
+      // where the GPU lighting pipeline is unavailable), so this floor alone
+      // must keep night navigable - never crushed to black, never blown white.
+      cm.brightness(Phaser.Math.Linear(0.85, 1.0, sun));
+      cm.saturate(Phaser.Math.Linear(-0.1, 0.03, sun));
+      // A gentle night tint for mood, capped low so the world stays readable.
+      if (nightAmt > 0.02 && cm.night) cm.night(nightAmt * 0.12);
       const golden = Math.max(0, 1 - Math.min(Math.abs(t - 0.25), Math.abs(t - 0.75)) * 8);
-      if (golden > 0 && cm.hue) cm.hue(-golden * 10);
+      if (golden > 0 && cm.hue) cm.hue(-golden * 8);
       if (this.weather === 'rainy') {
-        cm.saturate(-0.2);
-        cm.brightness(0.8);
+        cm.saturate(-0.15);
+        cm.brightness(0.88);
       }
     }
 
-    // Glow pools fade in at night (and a smaller one follows the player).
-    const glowA = Phaser.Math.Clamp(nightAmt * 1.2 - 0.1, 0, 1);
+    // Lamp/window glow pools fade in at night but stay restrained (Part 0.D:
+    // warm glow, not headlights). Player-following glow keeps the immediate
+    // surroundings visible at night (Part 0.E).
+    const glowA = Phaser.Math.Clamp(nightAmt * 0.7 - 0.05, 0, 0.6);
     for (const s of this.glows) s.setAlpha(glowA);
     if (this.playerGlow) {
       this.playerGlow.setPosition(this.player.x, this.player.y);
-      // Match the light: only a faint personal glow in deep night.
-      this.playerGlow.setAlpha(Math.pow(nightAmt, 3) * 0.5);
+      this.playerGlow.setAlpha(Phaser.Math.Clamp(nightAmt * 0.55 - 0.05, 0, 0.45));
     }
   }
 }

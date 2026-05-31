@@ -52,8 +52,9 @@ export default class WorldScene extends Phaser.Scene {
     EventBus.on(EVENTS.DAY_PASSED, this.onNewDay, this);
     // Significant events (eviction, firing) shake the screen.
     this._onToast = (p) => {
-      if (p.key === 'evicted' || p.key === 'fired') this.cameras.main.shake(350, 0.012);
-      else if (p.key) this.cameras.main.shake(150, 0.005);
+      // Subtle, major-events-only (Part 0.F): just eviction/firing get a small
+      // shake. Routine toasts (warnings, missed bills) no longer shake.
+      if (p.key === 'evicted' || p.key === 'fired') this.cameras.main.shake(220, 0.006);
     };
     EventBus.on(EVENTS.TOAST, this._onToast, this);
     this.events.once('shutdown', () => {
