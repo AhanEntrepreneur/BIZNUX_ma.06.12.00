@@ -1,7 +1,7 @@
 {
-  "name": "dinomonz",
-  "version": "1.0.0",
-  "description": "Dinomonz - a retro top-down 2D overworld built with Phaser 3 + Vite.",
+  "name": "biznux",
+  "version": "0.1.0",
+  "description": "Biznux 2D - a top-down retro pixel-art life-and-business simulator. v1 single-player vertical slice (architected for later multiplayer).",
   "type": "module",
   "scripts": {
     "dev": "vite",

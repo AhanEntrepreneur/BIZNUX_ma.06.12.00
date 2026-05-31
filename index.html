@@ -3,16 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dinomonz</title>
+    <title>Biznux 2D</title>
     <style>
-      /* Fill the window with a dark backdrop so the scaled-up, pixel-perfect
-         game canvas sits centered with no surrounding glare. */
+      /* Dark backdrop; the scaled-up pixel canvas sits centered, crisp. */
       html,
       body {
         margin: 0;
         padding: 0;
         height: 100%;
-        background: #0b0d1a;
+        background: #0a0a12;
         overflow: hidden;
       }
       #game {
@@ -22,8 +21,7 @@
         align-items: center;
         justify-content: center;
       }
-      /* Force nearest-neighbor scaling on the canvas itself as a belt-and-braces
-         measure (Phaser's pixelArt flag also does this). No blur, ever. */
+      /* Force nearest-neighbor scaling on the canvas (Phaser also sets this). */
       #game canvas {
         image-rendering: pixelated;
         image-rendering: crisp-edges;

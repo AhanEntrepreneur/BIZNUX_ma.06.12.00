@@ -1,36 +1,46 @@
 // ---------------------------------------------------------------------------
-// Dialogue data (separate from scene logic).
+// Dialogue lines (data), keyed by id and referenced from npcs.js. Each entry is
+// a name + an array of "pages" the dialogue box types out one at a time.
 //
-// Keyed by an id that NPCs / interactables reference (see npcs.js). Each entry
-// has a display `name` and an array of `lines` — each line is one "page" in the
-// dialogue box, advanced with Space/Enter.
-//
-// Add branching, conditions, or events later without touching the UI: this is
-// just data the DialogueBox renders.
+// These are the *intro* lines. Role-specific NPCs (job, college, realtor) hand
+// off to interactive menus after their intro - that wiring lives in WorldScene,
+// not here, so this stays pure data.
 // ---------------------------------------------------------------------------
 export const DIALOGUE = {
-  elder: {
-    name: 'Elder Bromm',
+  barista: {
+    name: 'Mara the Barista',
     lines: [
-      'Welcome to the valley, traveler!',
-      'Long ago, Dinomonz roamed these hills...',
-      'Some say they still slumber in the tall grass.',
-      'Explore. The world is yours to discover.',
+      'New in town? You look like you could use a paycheck.',
+      "We're hiring at the cafe. Nine to five, daily pay.",
     ],
   },
-  farmer: {
-    name: 'Farmer Pell',
+  dispatcher: {
+    name: 'Gig Dispatcher',
     lines: [
-      'Mornin! Fine day for a stroll, eh?',
-      'One day this field will be full of crops.',
-      "...but that's a tale for another update.",
+      'Need quick cash? No contract, just gigs.',
+      'Delivery, dog-walking, busking - take your pick.',
     ],
   },
-  sign_pond: {
-    name: 'Wooden Sign',
+  dean: {
+    name: 'Dean Okafor',
     lines: [
-      'POND - Watch your step!',
-      'The water is deeper than it looks.',
+      'Welcome to the Community College.',
+      'A short course can sharpen your mind - for a fee.',
+    ],
+  },
+  realtor: {
+    name: 'Rhea the Realtor',
+    lines: [
+      'Renting forever? That money could be building equity.',
+      'I can sell you a starter home - no more nightly rent.',
+    ],
+  },
+  mayor: {
+    name: 'Mayor Vell',
+    lines: [
+      'This city runs on ambition, friend.',
+      'Work hard, buy property, and who knows...',
+      'Maybe one day YOU run for this office.',
     ],
   },
 };

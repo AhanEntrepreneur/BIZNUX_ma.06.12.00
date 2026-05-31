@@ -1,40 +1,54 @@
 // ---------------------------------------------------------------------------
-// NPC / interactable placements (separate from scene logic).
-//
-// Positions are in TILE coordinates. `dialogue` references a key in
-// dialogue.js. `tint` recolors the placeholder character sheet so each NPC
-// looks distinct (when you add real per-NPC spritesheets, set `texture` and
-// drop the tint). `facing` is the direction they start looking.
-//
-// `type`:
-//   'npc'  -> a character sprite you can talk to
-//   'sign' -> a static interactable (still talked to via the same system)
+// NPC placements (data). Positions in TILE coords. `role` lets WorldScene wire
+// the right interaction (a job board, a course desk, the realtor) while still
+// using the shared dialogue/interaction system. `tint` recolors the placeholder
+// character sheet so NPCs look distinct until real art is added.
 // ---------------------------------------------------------------------------
 export const NPCS = [
   {
-    id: 'elder',
-    type: 'npc',
-    tileX: 6,
-    tileY: 11, // just below the top-left house door
-    tint: 0xffe0a0,
+    id: 'barista',
+    name: 'Mara the Barista',
+    tileX: 18, tileY: 8, // outside the cafe
+    tint: 0xffd2a0,
     facing: 'down',
-    dialogue: 'elder',
+    role: 'job', // opens the job-offer flow for the cafe
+    jobId: 'cafe',
+    dialogue: 'barista',
   },
   {
-    id: 'farmer',
-    type: 'npc',
-    tileX: 20,
-    tileY: 17, // out by the crossroads / future farm field
+    id: 'dispatcher',
+    name: 'Gig Dispatcher',
+    tileX: 6, tileY: 17, // on the plaza - hub for outdoor gigs
     tint: 0xa0e0ff,
-    facing: 'left',
-    dialogue: 'farmer',
+    facing: 'down',
+    role: 'jobboard', // offers delivery / dogwalk / busker
+    dialogue: 'dispatcher',
   },
   {
-    id: 'sign_pond',
-    type: 'sign',
-    tileX: 23,
-    tileY: 12, // at the foot of the pond
+    id: 'dean',
+    name: 'Dean Okafor',
+    tileX: 41, tileY: 8, // outside the college
+    tint: 0xc0a0ff,
     facing: 'down',
-    dialogue: 'sign_pond',
+    role: 'college', // sells a stat course
+    dialogue: 'dean',
+  },
+  {
+    id: 'realtor',
+    name: 'Rhea the Realtor',
+    tileX: 7, tileY: 35, // outside the realtor
+    tint: 0xa0ffc0,
+    facing: 'up',
+    role: 'realtor', // sells your first home
+    dialogue: 'realtor',
+  },
+  {
+    id: 'mayor',
+    name: 'Mayor Vell',
+    tileX: 19, tileY: 36, // outside city hall
+    tint: 0xffe0a0,
+    facing: 'up',
+    role: 'flavor', // governance is a later milestone; flavor for now
+    dialogue: 'mayor',
   },
 ];

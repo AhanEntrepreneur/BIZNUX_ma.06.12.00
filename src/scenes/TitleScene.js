@@ -1,73 +1,75 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT, FONT_FAMILY, PALETTE } from '../config.js';
+import { gameState } from '../core/GameState.js';
 
-// The title screen: shows the game name and waits for Enter to start the world.
+// Title screen. New players -> character creation. Returning players (with a
+// save) -> straight into the city, with an option to start over.
 export default class TitleScene extends Phaser.Scene {
   constructor() {
     super('TitleScene');
   }
 
-  create() {
+  create(data) {
     const cx = GAME_WIDTH / 2;
+    this.hasSave = data?.hasSave;
     this.cameras.main.setBackgroundColor(PALETTE.bg);
 
-    // Decorative grass strip along the bottom for a hint of the world.
-    this.add
-      .rectangle(0, GAME_HEIGHT - 40, GAME_WIDTH, 40, PALETTE.grass)
-      .setOrigin(0, 0);
-    this.add
-      .rectangle(0, GAME_HEIGHT - 40, GAME_WIDTH, 3, PALETTE.grassDark)
-      .setOrigin(0, 0);
+    // skyline strip for flavor
+    this.add.rectangle(0, GAME_HEIGHT - 36, GAME_WIDTH, 36, PALETTE.panelLight).setOrigin(0, 0);
+    for (let i = 0; i < 14; i++) {
+      const h = 8 + ((i * 37) % 26);
+      this.add
+        .rectangle(8 + i * 22, GAME_HEIGHT - 36, 14, -h, PALETTE.panel)
+        .setOrigin(0, 0);
+    }
 
-    // Title.
     this.add
-      .text(cx, 70, 'DINOMONZ', {
-        fontFamily: FONT_FAMILY,
-        fontSize: '24px',
-        color: '#ffffff',
-      })
+      .text(cx, 40, 'BIZNUX', { fontFamily: FONT_FAMILY, fontSize: '28px', color: '#ffffff' })
       .setOrigin(0.5);
-
     this.add
-      .text(cx, 100, 'a tiny overworld', {
+      .text(cx, 66, 'build a life. run the city.', {
         fontFamily: FONT_FAMILY,
         fontSize: '8px',
-        color: '#9aa0c0',
+        color: '#' + PALETTE.textDim.toString(16).padStart(6, '0'),
       })
       .setOrigin(0.5);
 
-    // Blinking "Press Enter to Start" prompt.
+    const promptText = this.hasSave ? 'PRESS ENTER TO CONTINUE' : 'PRESS ENTER TO START';
     const prompt = this.add
-      .text(cx, 160, 'PRESS ENTER TO START', {
+      .text(cx, 104, promptText, {
         fontFamily: FONT_FAMILY,
         fontSize: '10px',
-        color: '#ffe0a0',
+        color: '#' + PALETTE.accent.toString(16).padStart(6, '0'),
       })
       .setOrigin(0.5);
-    this.tweens.add({
-      targets: prompt,
-      alpha: 0.2,
-      duration: 600,
-      yoyo: true,
-      repeat: -1,
-    });
+    this.tweens.add({ targets: prompt, alpha: 0.2, duration: 600, yoyo: true, repeat: -1 });
 
-    this.add
-      .text(cx, GAME_HEIGHT - 14, 'Arrows/WASD move  -  Space/Enter talk', {
-        fontFamily: FONT_FAMILY,
-        fontSize: '8px',
-        color: '#1a1c2e',
-      })
-      .setOrigin(0.5);
+    if (this.hasSave) {
+      this.add
+        .text(cx, 124, 'press N for a new life (erases save)', {
+          fontFamily: FONT_FAMILY,
+          fontSize: '6px',
+          color: '#' + PALETTE.textDim.toString(16).padStart(6, '0'),
+        })
+        .setOrigin(0.5);
+    }
 
-    // Start on Enter or Space.
-    this.input.keyboard.once('keydown-ENTER', () => this.startGame());
-    this.input.keyboard.once('keydown-SPACE', () => this.startGame());
+    this.input.keyboard.once('keydown-ENTER', () => this.go());
+    this.input.keyboard.once('keydown-SPACE', () => this.go());
+    if (this.hasSave) {
+      this.input.keyboard.on('keydown-N', () => {
+        gameState.clear();
+        this.scene.start('CharacterScene');
+      });
+    }
   }
 
-  startGame() {
-    // Launch the world and the UI overlay together.
-    this.scene.start('WorldScene');
-    this.scene.launch('UIScene');
+  go() {
+    if (this.hasSave && gameState.data) {
+      this.scene.start('WorldScene');
+      this.scene.launch('UIScene');
+    } else {
+      this.scene.start('CharacterScene');
+    }
   }
 }

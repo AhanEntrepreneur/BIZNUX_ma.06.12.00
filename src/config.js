@@ -1,110 +1,147 @@
 // ---------------------------------------------------------------------------
-// Global game configuration.
+// Biznux 2D - global configuration.
 //
-// Everything here is meant to be tweaked without touching scene/game logic.
-// When you later swap the programmatic placeholder art for real spritesheets
-// (Kenney.nl, itch.io, etc.), most of your changes happen in THIS file and in
-// PreloadScene — not in WorldScene/Player/NPC.
+// Everything tweakable lives here so gameplay/scene logic stays clean. When the
+// project grows toward multiplayer, the server will own GameState (see
+// src/core/GameState.js) but most of THESE constants stay shared client/server.
 // ---------------------------------------------------------------------------
 
-// Internal (low) resolution. The whole point of retro: render small, scale up.
-// At 16px tiles this shows a 20x15 tile viewport, very GBA-like.
+// Internal (low) resolution. Render small, scale up -> retro look.
+// 320x180 is a 16:9 GBA-ish frame; at 16px tiles that's a 20x11 viewport.
 export const GAME_WIDTH = 320;
-export const GAME_HEIGHT = 240;
+export const GAME_HEIGHT = 180;
 
-// One tile = 16x16 pixels. Used by maps, the camera, collision, everything.
 export const TILE_SIZE = 16;
 
-// The pixel font (bundled via @fontsource, so `npm install` is all you need).
 export const FONT_FAMILY = '"Press Start 2P"';
 
-// Texture keys. Centralized so nothing hardcodes magic strings.
-export const TEXTURES = {
-  TILES: 'tiles', // the tileset (one row of 16x16 tiles)
-  PLAYER: 'player', // 4-direction character spritesheet
-  NPC: 'npc', // re-uses the player sheet shape, recolored per-NPC via tint
-  SIGN: 'sign', // a static wooden sign prop (16x16)
+// --- Time -------------------------------------------------------------------
+// Spec: 1 real minute = 1 in-game hour -> a full day in 24 real minutes.
+// So one in-game hour = 60 real seconds; one in-game minute = 1 real second.
+export const TIME = {
+  REAL_SECONDS_PER_GAME_HOUR: 60,
+  HOURS_PER_DAY: 24,
+  DAYS_PER_MONTH: 28, // 4 weeks
+  START_HOUR: 8, // new players wake at 08:00
 };
 
-// Tile indices inside the tileset texture. These map 1:1 to the column order
-// the placeholder generator draws them in. A real tileset just needs to match
-// this index order (or update these numbers).
+// --- Economy ----------------------------------------------------------------
+export const ECONOMY = {
+  STARTING_CASH: 500,
+  DAILY_RENT: 40, // charged at midnight if you don't own a home
+  RENT_GRACE_DAYS: 0,
+};
+
+// --- Player movement (analog, any-direction) --------------------------------
+export const PLAYER = {
+  SPEED: 70, // pixels/second, walking
+  // Fatigue climbs while awake; sleep resets it. 0..100.
+  FATIGUE_PER_GAME_HOUR: 5, // ~20 awake hours before maxed
+  FATIGUE_HIGH: 70, // above this, penalties kick in
+};
+
+// --- Stats ------------------------------------------------------------------
+// Five universal stats from the spec. Defaults for a fresh character.
+export const DEFAULT_STATS = {
+  charisma: 5,
+  intelligence: 5,
+  strength: 5,
+  reputation: 5,
+  confidence: 5,
+};
+export const STAT_KEYS = ['charisma', 'intelligence', 'strength', 'reputation', 'confidence'];
+export const STAT_MAX = 100;
+
+// Texture keys (centralized; never hardcode strings elsewhere).
+export const TEXTURES = {
+  TILES: 'tiles',
+  CHAR_BODY: 'char_body', // base body spritesheet (4 dir x 3 frames)
+  CHAR_HAIR: 'char_hair', // hair overlay sheet (same layout)
+  CHAR_OUTFIT: 'char_outfit', // outfit overlay sheet (same layout)
+  NPC_BODY: 'npc_body',
+};
+
+// Ground/object tile indices inside the tileset (match the art generator order).
 export const TILES = {
   GRASS: 0,
-  PATH: 1,
-  WATER: 2,
-  TREE: 3,
-  FLOWER: 4, // decorative, non-colliding grass variant
-  BUILDING_WALL: 5,
-  BUILDING_ROOF: 6,
-  BUILDING_DOOR: 7,
-  SAND: 8,
+  ROAD: 1, // asphalt
+  SIDEWALK: 2,
+  WATER: 3,
+  TREE: 4,
+  PLAZA: 5, // tiled plaza floor
+  WALL: 6, // generic building wall
+  CROSSWALK: 7,
+  PLANTER: 8, // decorative bush (collides)
 };
-
-// How many distinct tiles the placeholder generator should draw. Keep in sync
-// with the TILES table above.
 export const TILE_COUNT = 9;
 
-// Player/NPC spritesheet layout. 4 directions x 3 frames (idle, stepA, stepB).
+// Object-layer tiles that block movement.
+export const COLLIDING_TILES = [TILES.WATER, TILES.TREE, TILES.WALL, TILES.PLANTER];
+
+// Character spritesheet layout: 4 directions x 3 frames (idle, stepA, stepB).
 export const CHAR = {
   FRAME_WIDTH: 16,
   FRAME_HEIGHT: 16,
-  // Frame index of the first frame for each facing direction.
-  DIRECTION_OFFSET: {
-    down: 0,
-    left: 3,
-    right: 6,
-    up: 9,
-  },
-  FRAMES_PER_DIR: 3, // [idle, stepA, stepB]
+  DIRECTION_OFFSET: { down: 0, left: 3, right: 6, up: 9 },
+  FRAMES_PER_DIR: 3,
+  TOTAL_FRAMES: 12,
 };
 
-export const PLAYER = {
-  SPEED: 80, // pixels/second
-};
-
-// ---------------------------------------------------------------------------
-// Asset source switch.
-//
-// v1 ships with USE_PLACEHOLDER_ART = true: PreloadScene draws all art in code,
-// so the game runs with zero downloads.
-//
-// To use real art later:
-//   1. Drop your files into /public/assets (e.g. tiles.png, player.png).
-//   2. Set USE_PLACEHOLDER_ART = false.
-//   3. Make sure frame sizes / tile order match the tables above.
-// No game logic needs to change.
-// ---------------------------------------------------------------------------
+// --- Asset source switch ----------------------------------------------------
+// v1 generates all art in code (zero downloads). Flip to false and drop real
+// spritesheets in /public/assets to use art later; see public/assets/README.md.
 export const USE_PLACEHOLDER_ART = true;
-
 export const ASSET_PATHS = {
-  // Paths are relative to /public (Vite serves that folder at the web root).
   TILES: 'assets/tiles.png',
-  PLAYER: 'assets/player.png',
+  CHAR_BODY: 'assets/char_body.png',
+  CHAR_HAIR: 'assets/char_hair.png',
+  CHAR_OUTFIT: 'assets/char_outfit.png',
 };
 
-// Color palette (cohesive, limited). Used by the placeholder art generator and
-// the UI so everything feels like one world.
+// localStorage key for the local save (one slot in v1).
+export const SAVE_KEY = 'biznux.save.v1';
+
+// --- Cohesive, limited color palette ----------------------------------------
 export const PALETTE = {
-  bg: 0x0b0d1a,
-  grass: 0x4a9c3a,
-  grassDark: 0x3c8030,
-  path: 0xc9a86a,
-  pathDark: 0xb08f52,
+  bg: 0x0a0a12,
+  // city ground
+  grass: 0x4f8f3f,
+  grassDark: 0x3f7a31,
+  road: 0x3a3d4a,
+  roadLine: 0xd8c64a,
+  sidewalk: 0x9aa0ab,
+  sidewalkDark: 0x848a95,
+  plaza: 0xb9a78c,
+  plazaLine: 0xa08e74,
+  crosswalk: 0xe6e6e6,
   water: 0x3a72c4,
   waterLight: 0x5a92e4,
   treeLeaf: 0x2f7d32,
   treeLeafDark: 0x256127,
   treeTrunk: 0x6b4423,
-  wall: 0xd9b48f,
-  wallDark: 0xb8946f,
-  roof: 0xb5443a,
-  roofDark: 0x933630,
-  door: 0x5a3a22,
-  flower: 0xf2d24b,
-  sand: 0xe3d6a3,
+  planter: 0x35702f,
+  // buildings (used as tints over the WALL tile / labels)
+  wall: 0x6b6f80,
+  wallDark: 0x565a68,
+  // character base
+  skin: 0xf0c090,
+  skinShadow: 0xd9a878,
   // UI
-  panel: 0x1a1c2e,
+  panel: 0x141726,
+  panelLight: 0x22263c,
   panelBorder: 0xf4f4f4,
   text: 0xffffff,
+  textDim: 0x9aa0c0,
+  accent: 0xffd24b,
+  money: 0x6ee06e,
+  danger: 0xe05a5a,
+};
+
+// Building accent colors for the city's named lots.
+export const BUILDING_COLORS = {
+  cafe: 0xb5443a,
+  apartment: 0x4a6fa5,
+  college: 0x7a5aa0,
+  shop: 0xc99a3a,
+  cityhall: 0x3a8a6a,
 };
