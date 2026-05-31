@@ -31,7 +31,8 @@ export default class Player extends CharacterSprite {
       const len = Math.hypot(ax, ay) || 1;
       ax /= len;
       ay /= len;
-      this.setVelocity(ax * PLAYER.SPEED, ay * PLAYER.SPEED);
+      const sp = PLAYER.SPEED * (this.speedScale ?? 1);
+      this.setVelocity(ax * sp, ay * sp);
       if (Math.abs(ax) > Math.abs(ay)) this.facing = ax < 0 ? 'left' : 'right';
       else this.facing = ay < 0 ? 'up' : 'down';
       this.setFacing(this.facing, true);

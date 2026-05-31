@@ -1,20 +1,20 @@
 // ---------------------------------------------------------------------------
-// Procedural placeholder art generator (Phaser 4 canvas textures).
-//
-// TEMPORARY ART: these are cohesive, roughly top-down placeholders meant to be
-// replaced by the purchased LimeZu Modern packs via the keyed asset pipeline
-// (see data/assetManifest.js). They are intentionally NOT gold-plated.
+// Procedural art generator (Phaser 4 canvas textures) - the SELF-AUTHORED art
+// pipeline. Every visual asset in the game is drawn here in code from a shared
+// palette. No external/downloaded art (MA.06.12.01 Part 0.A).
 //
 // The character is a 4-LAYER paper doll, each layer a 4-dir x 3-frame sheet:
 //   body  -> skin + head + eyes      (tinted by face)
-//   bottoms -> TROUSERS + shoes      (tinted by outfit)   <-- Bug 1 lives/dies here
+//   bottoms -> TROUSERS + shoes      (tinted by outfit)
 //   top   -> shirt/jacket            (tinted by outfit)
 //   hair  -> hairstyle               (tinted by hair color)
 // Layers are drawn white so a tint fully recolors them.
 //
-// generate(scene, genId, key) dispatches by the manifest's `gen` id.
+// generate(scene, genId, key) dispatches by the manifest's `gen` id. Item icons
+// are drawn on demand via generateItemIcons() into one atlas keyed by item id.
 // ---------------------------------------------------------------------------
 import { TILE_SIZE, TILE_COUNT, TILES, CHAR, PALETTE } from '../config.js';
+import { ITEMS, ICON_MATERIALS } from '../data/items.js';
 
 function css(hex) {
   return '#' + (hex >>> 0).toString(16).padStart(6, '0').slice(-6);
@@ -279,8 +279,95 @@ function genSpark(scene, key) {
 // =========================================================================
 // DISPATCH
 // =========================================================================
+// =========================================================================
+// ITEM ICONS - one 16x16 icon per findable item, drawn from shape+material.
+// Produced as a single atlas texture (key 'items'); each item id becomes a
+// named frame so an Image can do scene.add.image(x,y,'items', itemId).
+// =========================================================================
+function shadeOf(hex, f) {
+  const r = Math.min(255, Math.max(0, ((hex >> 16) & 255) * f));
+  const g = Math.min(255, Math.max(0, ((hex >> 8) & 255) * f));
+  const b = Math.min(255, Math.max(0, (hex & 255) * f));
+  return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b);
+}
+
+// Per-shape drawer. (ox,oy) is the icon's top-left in the atlas.
+function drawIcon(ctx, ox, oy, shape, base) {
+  const dk = shadeOf(base, 0.65);
+  const lt = shadeOf(base, 1.25);
+  const outline = 0x141018;
+  const O = (x, y, w, h, c) => px(ctx, ox, oy, x, y, c, w, h);
+  switch (shape) {
+    case 'box':
+      O(3, 4, 10, 9, base); O(3, 4, 10, 1, lt); O(3, 12, 10, 1, dk); O(7, 4, 1, 9, dk);
+      O(2, 3, 12, 1, outline); O(2, 13, 12, 1, outline); O(2, 4, 1, 9, outline); O(13, 4, 1, 9, outline); break;
+    case 'bottle':
+      O(6, 2, 4, 2, lt); O(5, 4, 6, 10, base); O(5, 4, 1, 10, dk); O(10, 4, 1, 10, lt);
+      O(5, 2, 1, 12, outline); O(10, 2, 1, 12, outline); O(5, 13, 6, 1, outline); break;
+    case 'phone':
+      O(4, 2, 8, 12, dk); O(5, 3, 6, 9, lt); O(5, 3, 6, 9, base); O(6, 12, 4, 1, lt);
+      O(4, 2, 8, 1, outline); O(4, 13, 8, 1, outline); O(4, 2, 1, 12, outline); O(11, 2, 1, 12, outline); break;
+    case 'ring':
+      O(5, 5, 6, 6, base); O(6, 6, 4, 4, 0x000000); O(7, 3, 2, 2, lt); // gem on top
+      O(5, 5, 6, 1, lt); O(5, 10, 6, 1, dk); break;
+    case 'watch':
+      O(6, 2, 4, 2, dk); O(6, 12, 4, 2, dk); O(4, 4, 8, 8, base); O(6, 6, 4, 4, lt);
+      O(4, 4, 8, 1, outline); O(4, 11, 8, 1, outline); break;
+    case 'disc':
+      O(3, 6, 10, 4, base); O(4, 5, 8, 1, lt); O(4, 10, 8, 1, dk); O(7, 7, 2, 2, 0x202020); break;
+    case 'book':
+      O(3, 3, 10, 11, base); O(3, 3, 2, 11, dk); O(5, 4, 7, 1, lt); O(5, 6, 6, 1, lt);
+      O(2, 3, 1, 11, outline); O(13, 3, 1, 11, outline); O(3, 2, 10, 1, outline); break;
+    case 'can':
+      O(5, 3, 6, 10, base); O(5, 3, 6, 1, lt); O(5, 12, 6, 1, dk); O(5, 6, 6, 1, dk);
+      O(5, 3, 1, 10, outline); O(10, 3, 1, 10, outline); break;
+    case 'cup':
+      O(4, 4, 7, 8, base); O(11, 6, 2, 3, base); O(4, 4, 7, 1, lt); O(4, 11, 7, 1, dk);
+      O(4, 4, 1, 8, outline); O(10, 4, 1, 8, outline); break;
+    case 'tool':
+      O(7, 2, 2, 8, base); O(5, 9, 6, 4, dk); O(7, 2, 1, 8, lt); O(5, 9, 6, 1, lt); break;
+    case 'shoe':
+      O(3, 8, 11, 4, base); O(3, 11, 11, 1, dk); O(3, 8, 6, 1, lt); O(9, 6, 3, 3, base);
+      O(3, 12, 11, 1, outline); break;
+    case 'ball':
+      O(5, 5, 6, 6, base); O(6, 4, 4, 1, lt); O(6, 11, 4, 1, dk); O(4, 6, 1, 4, dk); O(11, 6, 1, 4, lt); break;
+    case 'gem':
+      O(7, 3, 2, 2, lt); O(5, 5, 6, 3, base); O(6, 8, 4, 3, dk); O(7, 11, 2, 1, dk); O(6, 5, 1, 3, lt); break;
+    case 'card':
+      O(3, 4, 10, 8, base); O(3, 4, 10, 1, lt); O(3, 11, 10, 1, dk); O(5, 6, 6, 1, lt); O(5, 8, 4, 1, lt);
+      O(2, 3, 12, 1, outline); O(2, 12, 12, 1, outline); break;
+    case 'key':
+      O(4, 5, 4, 4, base); O(5, 6, 2, 2, 0x000000); O(8, 6, 5, 2, base); O(11, 8, 1, 2, base); O(9, 8, 1, 2, base); break;
+    case 'bulb':
+      O(5, 3, 6, 6, lt); O(6, 9, 4, 2, dk); O(6, 11, 4, 1, base); O(6, 4, 2, 2, 0xffffff); break;
+    default:
+      O(4, 4, 8, 8, base);
+  }
+}
+
+export function generateItemIcons(scene, key = 'items') {
+  if (scene.textures.exists(key)) return;
+  const sz = 16;
+  const cols = 8;
+  const rows = Math.ceil(ITEMS.length / cols);
+  const { tex, ctx } = newCanvas(scene, key, cols * sz, rows * sz);
+  ITEMS.forEach((item, i) => {
+    const ox = (i % cols) * sz;
+    const oy = Math.floor(i / cols) * sz;
+    const base = ICON_MATERIALS[item.material] || 0xb0b6c0;
+    drawIcon(ctx, ox, oy, item.shape, base);
+  });
+  tex.refresh();
+  // Register a named frame per item id.
+  ITEMS.forEach((item, i) => {
+    const ox = (i % cols) * sz;
+    const oy = Math.floor(i / cols) * sz;
+    tex.add(item.id, 0, ox, oy, sz, sz);
+  });
+}
+
 export function generate(scene, genId, key) {
-  if (scene.textures.exists(key)) return; // real art already loaded
+  if (scene.textures.exists(key)) return; // already generated
   if (genId === 'tiles') return genTiles(scene, key);
   if (genId.startsWith('body:')) return buildCharSheet(scene, key, bodyDrawer(genId.split(':')[1]));
   if (genId.startsWith('bottoms:')) return buildCharSheet(scene, key, bottomsDrawer(+genId.split(':')[1]));
@@ -294,5 +381,6 @@ export function generate(scene, genId, key) {
   if (genId === 'poop') return genPoop(scene, key);
   if (genId === 'prompt') return genPrompt(scene, key);
   if (genId === 'spark') return genSpark(scene, key);
-  console.warn('Unknown placeholder gen id:', genId);
+  if (genId === 'items') return generateItemIcons(scene, key);
+  console.warn('Unknown gen id:', genId);
 }

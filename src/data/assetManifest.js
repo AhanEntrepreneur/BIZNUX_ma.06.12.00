@@ -68,5 +68,9 @@ export function buildManifest() {
   m.push({ key: KEYS.PROMPT, gen: 'prompt' });
   m.push({ key: KEYS.SPARK, gen: 'spark' });
 
+  // Item icons atlas (named frames per item id; not a uniform grid, so no
+  // `frame` validation entry - generateItemIcons registers frames itself).
+  m.push({ key: KEYS.ITEMS, gen: 'items' });
+
   return m;
 }

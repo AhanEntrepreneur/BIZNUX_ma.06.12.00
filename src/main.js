@@ -10,6 +10,7 @@ import TitleScene from './scenes/TitleScene.js';
 import CharacterScene from './scenes/CharacterScene.js';
 import WorldScene from './scenes/WorldScene.js';
 import MiniGameScene from './scenes/MiniGameScene.js';
+import JobActivity from './activities/JobActivity.js';
 import UIScene from './scenes/UIScene.js';
 
 // Inject the jobs table into GameState so daily wage settlement can look up
@@ -38,7 +39,7 @@ const gameConfig = {
     arcade: { gravity: { x: 0, y: 0 }, debug: false },
   },
   // Scene registry. Preload boots first; the rest start on demand.
-  scene: [PreloadScene, TitleScene, CharacterScene, WorldScene, MiniGameScene, UIScene],
+  scene: [PreloadScene, TitleScene, CharacterScene, WorldScene, MiniGameScene, JobActivity, UIScene],
 };
 
 async function start() {

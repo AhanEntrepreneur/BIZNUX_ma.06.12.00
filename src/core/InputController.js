@@ -23,7 +23,12 @@ export default class InputController {
     this.cancelKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
     this.phoneKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.TAB);
     this.sleepKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.Z);
+    this.backpackKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.B);
+    this.searchKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.F);
   }
+
+  backpackJustPressed() { return Phaser.Input.Keyboard.JustDown(this.backpackKey); }
+  searchJustPressed() { return Phaser.Input.Keyboard.JustDown(this.searchKey); }
 
   // Analog movement axis. Returns { x, y } each in [-1, 1].
   axis() {

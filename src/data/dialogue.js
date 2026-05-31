@@ -11,14 +11,35 @@ export const DIALOGUE = {
     name: 'Mara the Barista',
     lines: [
       'New in town? You look like you could use a paycheck.',
-      "We're hiring at the cafe. Nine to five, daily pay.",
+      "We're hiring at the cafe. Make the drinks, mind the rush.",
+    ],
+  },
+  clerk: {
+    name: 'Sam the Clerk',
+    lines: [
+      'Store could use another pair of hands.',
+      'Stock the shelves, run the till. Honest work.',
+    ],
+  },
+  flipper: {
+    name: 'Vic',
+    lines: [
+      'Welcome to the Flip Store. Buy low, sell high.',
+      "I'll buy your finds - below value, mind you. A guy's gotta eat.",
+    ],
+  },
+  pawnbroker: {
+    name: 'Iggy',
+    lines: [
+      'Pawn shop. Quick cash, no questions.',
+      "I pay less than the flip store, but you walk out with money TODAY.",
     ],
   },
   dispatcher: {
     name: 'Gig Dispatcher',
     lines: [
       'Need quick cash? No contract, just gigs.',
-      'Delivery, dog-walking, busking - take your pick.',
+      'Dog-walking, delivery, busking, odd jobs - take your pick.',
     ],
   },
   dean: {

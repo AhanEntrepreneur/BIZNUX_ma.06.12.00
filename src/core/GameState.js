@@ -44,8 +44,13 @@ function freshCharacter(appearance) {
 
     // Gig economy: per-gig persistent rating + stats (precarity loop).
     dogRating: 3.0, // 0..5 stars, starts middling
+    jobRatings: {}, // { cafe: 3.0, retail: 3.0, delivery: 3.0, busker: 3.0 }
     gigStats: {}, // { dogwalk: { done, good, bad } }
     poopBags: ECONOMY.STARTING_BAGS,
+
+    // Backpack / inventory (Part 3). Each entry: { itemId, condition, value }.
+    backpack: [],
+    backpackSlots: 12, // capacity; expandable later via better bags
 
     // Housing.
     ownsHome: false,
@@ -302,6 +307,42 @@ export class GameState {
     if (good) g.good++; else g.bad++;
     this.data.gigStats[gigId] = g;
     this.save();
+  }
+
+  // Per-job persistent rating (cafe/retail/delivery/busker), starts at 3.0.
+  jobRating(jobId) {
+    return this.data.jobRatings[jobId] ?? 3.0;
+  }
+
+  setJobRating(jobId, r) {
+    this.data.jobRatings[jobId] = Math.max(0, Math.min(5, r));
+    this.save();
+  }
+
+  // --- Backpack / inventory -------------------------------------------------
+  backpackFull() {
+    return this.data.backpack.length >= this.data.backpackSlots;
+  }
+
+  addItem(itemId, condition, value) {
+    if (this.backpackFull()) return false;
+    this.data.backpack.push({ itemId, condition, value: Math.round(value) });
+    this.save();
+    return true;
+  }
+
+  removeItemAt(index) {
+    if (index < 0 || index >= this.data.backpack.length) return null;
+    const [removed] = this.data.backpack.splice(index, 1);
+    this.save();
+    return removed;
+  }
+
+  sellItemAt(index, payout) {
+    const item = this.removeItemAt(index);
+    if (!item) return null;
+    this.changeCash(payout, 'sale');
+    return item;
   }
 
   useBag() {

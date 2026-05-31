@@ -7,12 +7,16 @@ import { DIALOGUE } from '../data/dialogue.js';
 import { JOBS } from '../data/jobs.js';
 import { EventBus, EVENTS } from '../eventbus.js';
 import { gameState } from '../core/GameState.js';
-import { rollAvailability } from '../core/LuckEngine.js';
+import { rollAvailability, resolveOutcome } from '../core/LuckEngine.js';
+import { searchSpot, trueValue, flipStoreOffer, pawnOffer, pawnAccepts, npcBuyerFor } from '../core/Market.js';
+import { ITEMS_BY_ID } from '../data/items.js';
+import { GIGS } from '../data/gigs.js';
 import InputController from '../core/InputController.js';
 import Player from '../entities/Player.js';
 import NPC from '../entities/NPC.js';
 import Atmosphere from '../core/Atmosphere.js';
 import DogWalk from '../activities/DogWalk.js';
+import DeliveryRun from '../activities/DeliveryRun.js';
 
 // The overworld city. Owns: the tile map + collision, the world clock that
 // advances in-game time, the player + NPCs, the smooth follow camera, and the
@@ -36,6 +40,7 @@ export default class WorldScene extends Phaser.Scene {
 
     // The procedural dog-walking activity (the realistic job template).
     this.dogWalk = new DogWalk(this);
+    this.delivery = new DeliveryRun(this);
 
     this.input_ = new InputController(this);
     // Stop the browser from stealing TAB (focus traversal) so the phone opens.
@@ -81,6 +86,7 @@ export default class WorldScene extends Phaser.Scene {
         interact: () => this.tryInteract(),
         facingNpc: () => this.getFacingNPC()?.npcId ?? null,
       };
+      window.__CITY = CITY;
     }
   }
 
@@ -304,16 +310,18 @@ export default class WorldScene extends Phaser.Scene {
     // mode === 'none': normal gameplay.
     this.player.unfreeze();
     if (this.input_.sleepJustPressed()) this.trySleep();
+    if (this.input_.backpackJustPressed()) { this.openBackpack(); return; }
+    if (this.input_.searchJustPressed()) { this.trySearchSpot(); return; }
 
-    // During a dog walk the player MOVES FREELY (real navigation); Space is
-    // routed to the activity first (clean up / hold leash / hand back dog).
+    // In-world activities (dog walk, delivery run): the player MOVES FREELY
+    // (real navigation); Space/E is routed to the activity first.
     if (this.dogWalk.active) {
-      if (confirm && this.dogWalk.onConfirm()) {
-        // handled by the activity
-      } else if (confirm) {
-        this.tryInteract();
-      }
+      if (confirm && this.dogWalk.onConfirm()) { /* handled */ }
+      else if (confirm) this.tryInteract();
       this.dogWalk.update(delta);
+    } else if (this.delivery.active) {
+      if (confirm) this.tryInteract();
+      this.delivery.update(delta);
     } else if (confirm) {
       this.tryInteract();
     }
@@ -338,9 +346,25 @@ export default class WorldScene extends Phaser.Scene {
   tryInteract() {
     // Picking up a booked dog at the client's door takes priority.
     if (this.checkDogPickup()) return;
+    // A scavenge spot in reach?
+    if (this.getNearbySearchSpot() && this.trySearchSpot()) return;
     const npc = this.getFacingNPC();
-    if (!npc) return;
-    this.dispatchInteraction(npc);
+    if (npc) { this.dispatchInteraction(npc); return; }
+    // Standing at a FACADE building's door -> coming-soon notice.
+    const fac = this.getFacingFacadeDoor();
+    if (fac) {
+      this.ui.openMenu(fac.label, ['Coming soon.', 'This place isn\'t open yet.'], [
+        { label: 'OK', onSelect: () => {} },
+      ]);
+    }
+  }
+
+  // Building (facade, non-functional) whose door the player is standing at.
+  getFacingFacadeDoor() {
+    const ptx = Math.floor(this.player.x / TILE_SIZE);
+    const pty = Math.floor(this.player.y / TILE_SIZE);
+    return CITY.buildings.find((b) => !b.functional &&
+      Math.abs(ptx - b.door.x) <= 1 && Math.abs(pty - b.door.y) <= 1) || null;
   }
 
   getFacingNPC() {
@@ -364,20 +388,13 @@ export default class WorldScene extends Phaser.Scene {
 
   openRoleMenu(npc) {
     switch (npc.role) {
-      case 'job':
-        this.offerJob(npc.jobId);
-        break;
-      case 'jobboard':
-        this.openJobBoard();
-        break;
-      case 'college':
-        this.openCollege();
-        break;
-      case 'realtor':
-        this.openRealtor();
-        break;
-      default:
-        break; // flavor NPCs: intro only
+      case 'job': this.offerJob(npc.jobId); break;
+      case 'jobboard': this.openJobBoard(); break;
+      case 'college': this.openCollege(); break;
+      case 'realtor': this.openRealtor(); break;
+      case 'flipstore': this.openFlipStore(); break;
+      case 'pawnshop': this.openPawnShop(); break;
+      default: break; // flavor NPCs: intro only
     }
   }
 
@@ -423,21 +440,48 @@ export default class WorldScene extends Phaser.Scene {
         },
       },
     ];
-    ['delivery', 'busker'].forEach((id) => {
-      options.push({
-        label: `${JOBS[id].title}  $${JOBS[id].dailyWage}/day`,
-        onSelect: () => {
-          this.gs.setJob(id);
-          this.toast(`Now working: ${JOBS[id].title}`);
-          this.time.delayedCall(50, () => this.offerShiftPrompt(id));
-        },
-      });
-    });
+    options.push({ label: 'Delivery Run  (find a parcel)', onSelect: () => this.lookForDelivery() });
+    options.push({ label: 'Minor gigs...', onSelect: () => this.openGigBoard() });
     options.push({ label: 'Never mind', onSelect: () => {} });
     this.ui.openMenu('Gig App', [
       `Bags: ${this.gs.data.poopBags}   Dog rating: ${rating}/5`,
       'Look for work - no guarantee of a client.',
     ], options);
+  }
+
+  // Minor gigs (Part 4): lighter, quick, lower-paid odd jobs. Each is an
+  // availability roll then a short resolve through the luck engine. They reuse
+  // the gig rating + money squeeze without a full activity scene.
+  openGigBoard() {
+    const rows = GIGS.map((g) => ({
+      label: `${g.title}  ~$${g.pay}`,
+      onSelect: () => this.doMinorGig(g),
+    }));
+    rows.push({ label: 'Back', onSelect: () => {} });
+    this.ui.openMenu('Minor Gigs', ['Quick, low-pay, no contract.'], rows);
+  }
+
+  doMinorGig(g) {
+    // Availability: sometimes nobody needs it right now.
+    const avail = rollAvailability(
+      { reputation: this.gs.data.stats.reputation, gigRating: 2.5, hour: this.gs.hour, weather: this.gs.data.weather },
+      { baseRate: g.baseRate ?? 0.6, baseFee: 0, feeSpread: 0, durations: [1] }
+    );
+    this.gs.advanceMinutes(g.minutes ?? 20);
+    this.gs.changeFatigue(g.fatigue ?? 3);
+    if (!avail.available) {
+      this.toast(`${g.title}: no work right now.`, PALETTE.textDim);
+      return;
+    }
+    // Outcome variance: stats tilt, luck decides.
+    const statBonus = Math.min(1, (this.gs.data.stats[g.stat] || 5) / 25);
+    const outcome = resolveOutcome(0.6, statBonus);
+    let pay = Math.round(g.pay * (0.5 + outcome.score));
+    if (g.outdoor && this.gs.data.weather === 'rainy') pay = Math.round(pay * 0.7);
+    this.gs.changeCash(pay, 'gig');
+    if (outcome.score > 0.55) this.gs.changeStat(g.stat, 1);
+    const col = outcome.tier === 'disaster' ? PALETTE.danger : PALETTE.money;
+    this.toast(`${g.title}: ${outcome.tier}. +$${pay}`, col);
   }
 
   // STEP 1: availability roll. Sometimes there is no client (real precarity).
@@ -491,6 +535,41 @@ export default class WorldScene extends Phaser.Scene {
         },
       },
       { label: 'Decline', onSelect: () => { this.pendingBooking = null; } },
+    ]);
+  }
+
+  // Delivery: availability roll, then a real navigation run (DeliveryRun).
+  lookForDelivery() {
+    if (this.dogWalk.active || this.delivery.active) { this.toast('Finish your current job first.', PALETTE.danger); return; }
+    const roll = rollAvailability(
+      { reputation: this.gs.data.stats.reputation, gigRating: this.gs.jobRating('delivery'), hour: this.gs.hour, weather: this.gs.data.weather },
+      { baseRate: 0.55, baseFee: 40, feeSpread: 50, durations: [1] }
+    );
+    this.gs.advanceMinutes(8);
+    if (!roll.available) {
+      this.ui.openMenu('Gig App', ['No delivery jobs right now.', 'Try again later.'], [{ label: 'OK', onSelect: () => {} }]);
+      return;
+    }
+    const lots = CITY.buildings;
+    const pickup = Phaser.Utils.Array.GetRandom(lots);
+    let dropoff = Phaser.Utils.Array.GetRandom(lots);
+    let guard = 0;
+    while (dropoff === pickup && guard++ < 10) dropoff = Phaser.Utils.Array.GetRandom(lots);
+    // Time window scales with distance so far runs are fair.
+    const dist = Math.hypot(pickup.door.x - dropoff.door.x, pickup.door.y - dropoff.door.y);
+    const secondsAllowed = Math.round(20 + dist * 1.1);
+    this.ui.openMenu('Delivery Job!', [
+      `Pickup: ${pickup.label}`,
+      `Drop-off: ${dropoff.label}`,
+      `Pay $${roll.fee}   Window ${secondsAllowed}s (scooter boost)`,
+    ], [
+      { label: 'Accept the run', onSelect: () => this.delivery.begin({
+        fee: roll.fee,
+        pickup: { x: pickup.door.x, y: pickup.door.y },
+        dropoff: { x: dropoff.door.x, y: dropoff.door.y },
+        secondsAllowed,
+      }) },
+      { label: 'Decline', onSelect: () => {} },
     ]);
   }
 
@@ -596,7 +675,219 @@ export default class WorldScene extends Phaser.Scene {
     ]);
   }
 
-  // Launch the work mini-game scene for a job, then apply the result.
+  // --- Item economy: Flip Store / Pawn Shop / backpack / search (Part 3) -----
+
+  // Flip Store: buy from rotating stock, sell to store (below value), or flip
+  // to an NPC buyer (higher, with haggling).
+  openFlipStore() {
+    const day = this.gs.day;
+    const opts = [
+      { label: 'Sell items to store', onSelect: () => this.openSellList('flip') },
+      { label: 'Flip an item to a buyer', onSelect: () => this.openFlipList() },
+      { label: 'Browse store stock', onSelect: () => this.openBuyList() },
+      { label: 'Leave', onSelect: () => {} },
+    ];
+    this.ui.openMenu('Flip Store', [
+      `Backpack ${this.gs.data.backpack.length}/${this.gs.data.backpackSlots}`,
+      'I pay ~70% of value. Buyers pay more.',
+    ], opts);
+    void day;
+  }
+
+  openPawnShop() {
+    this.ui.openMenu('Pawn Shop', [
+      `Backpack ${this.gs.data.backpack.length}/${this.gs.data.backpackSlots}`,
+      'Quick cash, lowest prices. I only take decent goods.',
+    ], [
+      { label: 'Pawn items', onSelect: () => this.openSellList('pawn') },
+      { label: 'Leave', onSelect: () => {} },
+    ]);
+  }
+
+  // Build a sell list for either store; each row sells one item at the offer.
+  openSellList(where) {
+    const day = this.gs.day;
+    const bp = this.gs.data.backpack;
+    if (bp.length === 0) { this.toast('Your backpack is empty.', PALETTE.textDim); return; }
+    const rows = [];
+    bp.forEach((inv, idx) => {
+      const name = ITEMS_BY_ID[inv.itemId]?.name || inv.itemId;
+      if (where === 'pawn' && !pawnAccepts(inv)) return; // pawn is pickier
+      const offer = where === 'flip' ? flipStoreOffer(inv, day) : pawnOffer(inv, day);
+      rows.push({
+        label: `${name} (${inv.condition}) - $${offer}`,
+        onSelect: () => {
+          this.gs.sellItemAt(idx, offer);
+          this.toast(`Sold ${name} for $${offer}.`, PALETTE.money);
+          this.time.delayedCall(60, () => (where === 'flip' ? this.openSellList('flip') : this.openSellList('pawn')));
+        },
+      });
+    });
+    if (rows.length === 0) { this.toast('Nothing here they will buy.', PALETTE.textDim); return; }
+    rows.push({ label: 'Back', onSelect: () => {} });
+    this.ui.openMenu(where === 'flip' ? 'Sell to Flip Store' : 'Pawn Items',
+      ['They pay below true value.'], rows);
+  }
+
+  // Flip-to-NPC: pick an item, meet a buyer, haggle (Charisma-driven).
+  openFlipList() {
+    const bp = this.gs.data.backpack;
+    if (bp.length === 0) { this.toast('Nothing to flip.', PALETTE.textDim); return; }
+    const rows = bp.map((inv, idx) => {
+      const name = ITEMS_BY_ID[inv.itemId]?.name || inv.itemId;
+      return { label: `${name} (${inv.condition})`, onSelect: () => this.startHaggle(idx) };
+    });
+    rows.push({ label: 'Back', onSelect: () => {} });
+    this.ui.openMenu('Flip to a Buyer', ['Pick an item to sell to an NPC.'], rows);
+  }
+
+  // Haggle: a buyer offers; push for more (Charisma + roll) or accept. Push too
+  // hard and they walk.
+  startHaggle(idx) {
+    const inv = this.gs.data.backpack[idx];
+    if (!inv) return;
+    const name = ITEMS_BY_ID[inv.itemId]?.name || inv.itemId;
+    const cha = this.gs.data.stats.charisma;
+    const buyer = npcBuyerFor(inv, this.gs.day, cha);
+    let offer = buyer.baseOffer;
+    let pushes = 0;
+
+    const showOffer = () => {
+      this.ui.openMenu(`Buyer wants: ${name}`, [
+        `Offer: $${offer}   (value ~$${buyer.trueValue})`,
+        pushes === 0 ? 'They look interested.' : `You have pushed ${pushes}x.`,
+      ], [
+        { label: `Accept $${offer}`, onSelect: () => {
+          this.gs.sellItemAt(idx, offer);
+          this.gs.changeStat('charisma', 0); // (charisma already helped odds)
+          this.toast(`Flipped ${name} for $${offer}!`, PALETTE.money);
+        } },
+        { label: 'Push for more', onSelect: () => {
+          pushes++;
+          // Success chance falls as you push; charisma lifts it.
+          const chance = Phaser.Math.Clamp(0.35 + cha * 0.02 - pushes * 0.18, 0.05, 0.85);
+          if (Math.random() < chance) {
+            offer = Math.round(offer * (1.1 + Math.random() * 0.15));
+            this.time.delayedCall(40, showOffer);
+          } else {
+            // Buyer may walk if pushed too far.
+            if (Math.random() < 0.4 + pushes * 0.15) {
+              this.toast(`${name}: the buyer walked away.`, PALETTE.danger);
+            } else {
+              this.toast('They held firm.', PALETTE.textDim);
+              this.time.delayedCall(40, showOffer);
+            }
+          }
+        } },
+        { label: 'Cancel', onSelect: () => {} },
+      ]);
+    };
+    showOffer();
+  }
+
+  // Flip store buy: a small rotating stock the player can buy to resell.
+  openBuyList() {
+    const day = this.gs.day;
+    if (!this._stockDay || this._stockDay !== day) {
+      // Roll a fresh stock of 4 items once per day.
+      this._stock = [];
+      const ids = Object.keys(ITEMS_BY_ID);
+      for (let i = 0; i < 4; i++) {
+        const id = ids[Math.floor(Math.random() * ids.length)];
+        const it = ITEMS_BY_ID[id];
+        this._stock.push({ itemId: id, condition: 'good', ask: Math.round(it.value * (0.9 + Math.random() * 0.3)) });
+      }
+      this._stockDay = day;
+    }
+    const rows = this._stock.map((s, i) => {
+      const name = ITEMS_BY_ID[s.itemId]?.name || s.itemId;
+      return {
+        label: `${name} - $${s.ask}`,
+        onSelect: () => {
+          if (this.gs.backpackFull()) { this.toast('Backpack full!', PALETTE.danger); return; }
+          if (this.gs.data.cash < s.ask) { this.toast('Not enough cash!', PALETTE.danger); return; }
+          this.gs.changeCash(-s.ask, 'buy');
+          this.gs.addItem(s.itemId, s.condition, s.ask);
+          this.toast(`Bought ${name}.`, PALETTE.money);
+        },
+      };
+    });
+    rows.push({ label: 'Back', onSelect: () => {} });
+    this.ui.openMenu('Store Stock', ['Buy low, sell high elsewhere.'], rows);
+  }
+
+  // Search a scavenge spot: a luck-and-effort roll that costs time + fatigue.
+  trySearchSpot() {
+    const spot = this.getNearbySearchSpot();
+    if (!spot) return false;
+    // Cost: 12 in-game minutes + a little fatigue per search.
+    this.gs.advanceMinutes(12);
+    this.gs.changeFatigue(2);
+    const found = searchSpot(spot.weight, {
+      reputation: this.gs.data.stats.reputation,
+      luckRating: 2.5,
+      hour: this.gs.hour,
+      weather: this.gs.data.weather,
+    });
+    if (!found) {
+      this.toast(`Searched the ${spot.label.toLowerCase()}... nothing.`, PALETTE.textDim);
+      return true;
+    }
+    if (this.gs.backpackFull()) {
+      this.toast(`Found ${found.name} but your backpack is full!`, PALETTE.danger);
+      return true;
+    }
+    this.gs.addItem(found.itemId, found.condition, found.value);
+    const col = found.tier === 'rare' ? PALETTE.accent : PALETTE.money;
+    this.toast(`Found: ${found.name} (${found.conditionLabel}) ~$${found.value}`, col);
+    return true;
+  }
+
+  getNearbySearchSpot() {
+    const ptx = this.player.x / TILE_SIZE;
+    const pty = this.player.y / TILE_SIZE;
+    let best = null;
+    let bestD = 1.6;
+    (CITY.searchSpots || []).forEach((s) => {
+      const d = Math.hypot(ptx - (s.x + 0.5), pty - (s.y + 0.5));
+      if (d < bestD) { bestD = d; best = s; }
+    });
+    return best;
+  }
+
+  // Open the backpack (phone extension) - inspect items.
+  openBackpack() {
+    const bp = this.gs.data.backpack;
+    const day = this.gs.day;
+    const info = [`Backpack ${bp.length}/${this.gs.data.backpackSlots}`];
+    if (bp.length === 0) {
+      this.ui.openMenu('Backpack', [...info, 'Empty. Search the city for items.'], [
+        { label: 'Close', onSelect: () => {} },
+      ]);
+      return;
+    }
+    const rows = bp.map((inv, idx) => {
+      const it = ITEMS_BY_ID[inv.itemId];
+      const tv = trueValue(inv, day);
+      return {
+        label: `${it?.name || inv.itemId} (${inv.condition}) ~$${tv}`,
+        onSelect: () => {
+          this.ui.openMenu(it?.name || inv.itemId, [
+            `Condition: ${inv.condition}`,
+            `Est. value: ~$${tv}`,
+            `Tier: ${it?.tier || '?'}`,
+          ], [
+            { label: 'Drop', onSelect: () => { this.gs.removeItemAt(idx); this.toast('Dropped.', PALETTE.textDim); } },
+            { label: 'Back', onSelect: () => this.openBackpack() },
+          ]);
+        },
+      };
+    });
+    rows.push({ label: 'Close', onSelect: () => {} });
+    this.ui.openMenu('Backpack', info, rows);
+  }
+
+  // Launch the deep, procedural work shift (JobActivity owns pay/rating).
   startShift(jobId) {
     const job = JOBS[jobId];
     const hour = this.gs.hour;
@@ -604,7 +895,9 @@ export default class WorldScene extends Phaser.Scene {
       this.toast(`${job.title} shift is ${job.shift.start}:00-${job.shift.end}:00`, PALETTE.danger);
       return;
     }
-    this.scene.launch('MiniGameScene', { jobId });
+    // A shift takes time off the clock (real work, not instant).
+    this.gs.advanceMinutes(Phaser.Math.Between(60, 120));
+    this.scene.launch('JobActivity', { jobId });
     this.scene.pause();
   }
 
