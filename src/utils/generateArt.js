@@ -104,99 +104,137 @@ function genTiles(scene, key) {
   for (let i = 0; i < TILE_COUNT; i++) tex.add(i, 0, i * TILE_SIZE, 0, TILE_SIZE, TILE_SIZE);
 }
 
+// Leg vertical offset per walk step (shared so bottoms + body align).
+function legYs(step) {
+  return [12 + (step === 1 ? -1 : 0), 12 + (step === -1 ? -1 : 0)];
+}
+
 // =========================================================================
-// CHARACTER LAYERS (4 dir x 3 frames). Walk a frame grid + register frames.
+// CHARACTER - COMPOSITE PAPER DOLL (P.1 root-cause fix).
+//
+// Root cause of the recurring "character breaks apart" bug: the layers were
+// SEPARATE sprite objects repositioned/frame-copied in preUpdate, which runs
+// BEFORE the physics step moves the body - so overlays rendered at the body's
+// previous position and visibly detached on a real GPU.
+//
+// Fix: bake body + bottoms + top + hair into ONE 12-frame spritesheet per
+// appearance and animate a single sprite. One object, one position, one frame
+// set -> separation is structurally impossible. These color-aware drawers paint
+// directly with the final colors (no runtime tint), composited in order.
 // =========================================================================
+
+// BODY: head + skin torso + bare legs (covered by clothes) + facing eyes.
+function drawBody(ctx, ox, oy, dir, step, c) {
+  const skin = c.skin;
+  const sh = shade(skin, 0.82);
+  const hi = light(skin, 1.1);
+  const eye = 0x241c28;
+  const narrow = c.bodyType === 'fem';
+  const tx = narrow ? 6 : 5;
+  const tw = narrow ? 4 : 6;
+  // torso (mostly covered by the top)
+  px(ctx, ox, oy, tx, 7, skin, tw, 5);
+  // head with a touch of shading
+  px(ctx, ox, oy, 5, 2, skin, 6, 5);
+  px(ctx, ox, oy, 5, 2, hi, 6, 1);
+  px(ctx, ox, oy, 5, 6, sh, 6, 1); // neck shade
+  // bare legs (covered by bottoms)
+  const [ly1, ly2] = legYs(step);
+  px(ctx, ox, oy, 5, ly1, skin, 2, 3);
+  px(ctx, ox, oy, 9, ly2, skin, 2, 3);
+  // facing eyes
+  if (dir === 'down') { px(ctx, ox, oy, 6, 4, eye, 1, 1); px(ctx, ox, oy, 9, 4, eye, 1, 1); }
+  else if (dir === 'left') px(ctx, ox, oy, 6, 4, eye, 1, 1);
+  else if (dir === 'right') px(ctx, ox, oy, 9, 4, eye, 1, 1);
+  // up: back of head, no eyes
+}
+
+// BOTTOMS: trousers/shorts over the legs + shoes, with shading + a seam.
+function drawBottoms(ctx, ox, oy, dir, step, c) {
+  const cloth = c.color;
+  const sh = shade(cloth, 0.72);
+  const shoe = shade(cloth, 0.5);
+  const [ly1, ly2] = legYs(step);
+  px(ctx, ox, oy, 5, 11, cloth, 6, 1); // waistband
+  const legH = c.variant === 0 ? 2 : 3; // variant 0 = shorts
+  px(ctx, ox, oy, 5, ly1, cloth, 2, legH);
+  px(ctx, ox, oy, 9, ly2, cloth, 2, legH);
+  px(ctx, ox, oy, 8, ly1, sh, 1, legH); // inseam shadow
+  // shoes at the feet
+  px(ctx, ox, oy, 5, ly1 + legH, shoe, 2, 1);
+  px(ctx, ox, oy, 9, ly2 + legH, shoe, 2, 1);
+}
+
+// TOP: shirt/jacket over the torso, with sleeves, collar/zip per variant.
+function drawTop(ctx, ox, oy, dir, step, c) {
+  const cloth = c.color;
+  const sh = shade(cloth, 0.72);
+  const hi = light(cloth, 1.18);
+  px(ctx, ox, oy, 5, 7, cloth, 6, 5); // torso shirt
+  px(ctx, ox, oy, 5, 7, hi, 6, 1); // shoulder highlight
+  px(ctx, ox, oy, 4, 7, cloth, 1, 4); // sleeves
+  px(ctx, ox, oy, 11, 7, cloth, 1, 4);
+  px(ctx, ox, oy, 5, 11, sh, 6, 1); // hem shadow
+  if (c.variant === 1) px(ctx, ox, oy, 7, 7, sh, 2, 1); // collar
+  if (c.variant === 2) px(ctx, ox, oy, 7, 7, sh, 1, 5); // jacket zip
+  if (c.variant === 3) px(ctx, ox, oy, 5, 9, hi, 6, 1); // stripe
+  void step;
+}
+
+// HAIR: hairstyle silhouette with shading.
+function drawHair(ctx, ox, oy, dir, c) {
+  const hair = c.color;
+  const sh = shade(hair, 0.72);
+  const hi = light(hair, 1.2);
+  px(ctx, ox, oy, 5, 1, hair, 6, 2);
+  px(ctx, ox, oy, 4, 1, hair, 1, 2);
+  px(ctx, ox, oy, 11, 1, hair, 1, 2);
+  px(ctx, ox, oy, 5, 1, hi, 6, 1); // top sheen
+  const style = c.style;
+  if (style % 4 === 1) { px(ctx, ox, oy, 4, 3, hair, 1, 3); px(ctx, ox, oy, 11, 3, hair, 1, 3); } // long sides
+  if (style % 4 === 2) { px(ctx, ox, oy, 6, 0, hair, 1, 1); px(ctx, ox, oy, 9, 0, hair, 1, 1); } // spiky
+  if (style % 4 === 3) px(ctx, ox, oy, 5, 0, hair, 6, 1); // flat top
+  if (style >= 4) px(ctx, ox, oy, 4, 2, hair, 8, 1); // fuller
+  if (dir === 'up') px(ctx, ox, oy, 5, 2, hair, 6, 3); // back of head
+  else if (dir === 'left') { px(ctx, ox, oy, 5, 3, hair, 2, 1); px(ctx, ox, oy, 5, 4, sh, 1, 1); }
+  else if (dir === 'right') { px(ctx, ox, oy, 9, 3, hair, 2, 1); px(ctx, ox, oy, 10, 4, sh, 1, 1); }
+}
+
+// Build ONE composited 12-frame character sheet from a resolved color set.
+// colors: { skin, bodyType, bottoms:{color,variant}, top:{color,variant},
+//           hair:{color,style} }
+export function generateCharacterComposite(scene, key, colors) {
+  if (scene.textures.exists(key)) return key;
+  const dirs = ['down', 'left', 'right', 'up'];
+  const steps = [0, 1, -1];
+  const total = dirs.length * steps.length;
+  const { tex, ctx } = newCanvas(scene, key, total * CHAR.FRAME_WIDTH, CHAR.FRAME_HEIGHT);
+  let f = 0;
+  dirs.forEach((dir) => steps.forEach((step) => {
+    const ox = f * CHAR.FRAME_WIDTH;
+    // Draw in order: body, bottoms, top, hair - all into the SAME frame.
+    drawBody(ctx, ox, 0, dir, step, { skin: colors.skin, bodyType: colors.bodyType });
+    drawBottoms(ctx, ox, 0, dir, step, colors.bottoms);
+    drawTop(ctx, ox, 0, dir, step, colors.top);
+    drawHair(ctx, ox, 0, dir, colors.hair);
+    f++;
+  }));
+  tex.refresh();
+  for (let i = 0; i < total; i++) tex.add(i, 0, i * CHAR.FRAME_WIDTH, 0, CHAR.FRAME_WIDTH, CHAR.FRAME_HEIGHT);
+  return key;
+}
+
+// Legacy per-layer sheet builder retained ONLY for the dog (single-texture
+// animal, no layering) and any non-composited use.
 function buildCharSheet(scene, key, drawFn) {
   const dirs = ['down', 'left', 'right', 'up'];
-  const steps = [0, 1, -1]; // idle, stepA, stepB
+  const steps = [0, 1, -1];
   const total = dirs.length * steps.length;
   const { tex, ctx } = newCanvas(scene, key, total * CHAR.FRAME_WIDTH, CHAR.FRAME_HEIGHT);
   let f = 0;
   dirs.forEach((dir) => steps.forEach((step) => { drawFn(ctx, f * CHAR.FRAME_WIDTH, 0, dir, step); f++; }));
   tex.refresh();
   for (let i = 0; i < total; i++) tex.add(i, 0, i * CHAR.FRAME_WIDTH, 0, CHAR.FRAME_WIDTH, CHAR.FRAME_HEIGHT);
-}
-// Leg vertical offset per walk step (shared so bottoms + body align).
-function legYs(step) {
-  return [12 + (step === 1 ? -1 : 0), 12 + (step === -1 ? -1 : 0)];
-}
-
-// BODY: head + skin torso + bare legs + eyes. Drawn in skin so face-tint works.
-function bodyDrawer(bodyType) {
-  const narrow = bodyType === 'fem';
-  return (ctx, ox, oy, dir, step) => {
-    const skin = 0xffffff; // tinted by face
-    const shade = 0xdddddd;
-    const eye = 0x202020;
-    const tx = narrow ? 6 : 5;
-    const tw = narrow ? 4 : 6;
-    px(ctx, ox, oy, tx, 7, skin, tw, 5); // torso (covered by top)
-    px(ctx, ox, oy, 5, 2, skin, 6, 5); // head
-    px(ctx, ox, oy, 5, 6, shade, 6, 1); // neck shade
-    const [ly1, ly2] = legYs(step); // bare legs (covered by bottoms)
-    px(ctx, ox, oy, 5, ly1, skin, 2, 3);
-    px(ctx, ox, oy, 9, ly2, skin, 2, 3);
-    if (dir === 'down') { px(ctx, ox, oy, 6, 4, eye, 1, 1); px(ctx, ox, oy, 9, 4, eye, 1, 1); }
-    else if (dir === 'left') px(ctx, ox, oy, 6, 4, eye, 1, 1);
-    else if (dir === 'right') px(ctx, ox, oy, 9, 4, eye, 1, 1);
-  };
-}
-
-// BOTTOMS: TROUSERS over the legs + shoes. White -> tinted by outfit.
-// THIS is the fix for Bug 1: the previous build had no trousers layer, so the
-// skin legs showed through. Now trousers fully cover the legs in all 4 dirs.
-function bottomsDrawer(variant) {
-  return (ctx, ox, oy, dir, step) => {
-    const cloth = 0xffffff; // tinted
-    const shoe = 0xcccccc;
-    const [ly1, ly2] = legYs(step);
-    // waistband
-    px(ctx, ox, oy, 5, 11, cloth, 6, 1);
-    // trouser legs (cover the body's skin legs, slightly taller)
-    px(ctx, ox, oy, 5, ly1, cloth, 2, 3);
-    px(ctx, ox, oy, 9, ly2, cloth, 2, 3);
-    // variant 0 = shorts (shorter), others full-length seam detail
-    if (variant === 1) { px(ctx, ox, oy, 6, ly1, shoe, 1, 3); px(ctx, ox, oy, 9, ly2, shoe, 1, 3); }
-    if (variant === 2) px(ctx, ox, oy, 5, 13, shoe, 6, 1); // cuff line
-    // shoes at the very bottom
-    px(ctx, ox, oy, 5, ly1 + 3, shoe, 2, 1);
-    px(ctx, ox, oy, 9, ly2 + 3, shoe, 2, 1);
-  };
-}
-
-// TOP: shirt/jacket over the torso. White -> tinted by outfit.
-function topDrawer(variant) {
-  return (ctx, ox, oy, dir, step) => {
-    const cloth = 0xffffff;
-    const shade = 0xdddddd;
-    px(ctx, ox, oy, 5, 7, cloth, 6, 5); // torso shirt
-    // sleeves nudge with the step for a hint of motion
-    const [ly1, ly2] = legYs(step);
-    px(ctx, ox, oy, 4, 7, cloth, 1, 3 + (ly1 === 11 ? 0 : 0));
-    px(ctx, ox, oy, 11, 7, cloth, 1, 3);
-    if (variant === 1) px(ctx, ox, oy, 5, 7, shade, 6, 1); // collar
-    if (variant === 2) px(ctx, ox, oy, 7, 7, shade, 2, 5); // jacket zipper
-    if (variant === 3) { px(ctx, ox, oy, 5, 9, shade, 6, 1); } // stripe
-    void ly2;
-  };
-}
-
-// HAIR: hairstyle silhouette. White -> tinted by hair color.
-function hairDrawer(style) {
-  return (ctx, ox, oy, dir) => {
-    const hair = 0xffffff;
-    px(ctx, ox, oy, 5, 1, hair, 6, 2);
-    px(ctx, ox, oy, 4, 1, hair, 1, 2);
-    px(ctx, ox, oy, 11, 1, hair, 1, 2);
-    if (style % 4 === 1) { px(ctx, ox, oy, 4, 3, hair, 1, 3); px(ctx, ox, oy, 11, 3, hair, 1, 3); } // long sides
-    if (style % 4 === 2) { px(ctx, ox, oy, 6, 0, hair, 1, 1); px(ctx, ox, oy, 9, 0, hair, 1, 1); } // spiky
-    if (style % 4 === 3) { px(ctx, ox, oy, 5, 0, hair, 6, 1); } // flat top
-    if (style >= 4) px(ctx, ox, oy, 4, 2, hair, 8, 1); // fuller variant
-    if (dir === 'up') px(ctx, ox, oy, 5, 2, hair, 6, 3);
-    else if (dir === 'left') px(ctx, ox, oy, 5, 3, hair, 2, 1);
-    else if (dir === 'right') px(ctx, ox, oy, 9, 3, hair, 2, 1);
-  };
 }
 
 // =========================================================================
@@ -481,10 +519,8 @@ export function generateItemIcons(scene, key = 'items') {
 export function generate(scene, genId, key) {
   if (scene.textures.exists(key)) return; // already generated
   if (genId === 'tiles') return genTiles(scene, key);
-  if (genId.startsWith('body:')) return buildCharSheet(scene, key, bodyDrawer(genId.split(':')[1]));
-  if (genId.startsWith('bottoms:')) return buildCharSheet(scene, key, bottomsDrawer(+genId.split(':')[1]));
-  if (genId.startsWith('top:')) return buildCharSheet(scene, key, topDrawer(+genId.split(':')[1]));
-  if (genId.startsWith('hair:')) return buildCharSheet(scene, key, hairDrawer(+genId.split(':')[1]));
+  // Character layers are no longer generated as separate sheets - characters
+  // are composited into one sheet on demand (generateCharacterComposite).
   if (genId === 'shadow') return genShadow(scene, key);
   if (genId === 'dog') return genDog(scene, key);
   if (genId === 'raindrop') return genRaindrop(scene, key);

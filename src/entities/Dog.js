@@ -20,8 +20,6 @@ export default class Dog extends Phaser.Physics.Arcade.Sprite {
     this.pullTarget = null;
 
     this.shadow = scene.add.image(x, y + 6, KEYS.SHADOW).setScale(0.8);
-    this.shadow.setLighting?.(false);
-    this.enableLighting?.();
 
     this.leash = scene.add.graphics().setDepth(900050);
 

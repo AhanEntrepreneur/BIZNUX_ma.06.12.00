@@ -38,7 +38,6 @@ export default class NPC extends CharacterSprite {
       targets: this.marker, y: '-=2', duration: 520, yoyo: true, repeat: -1,
       ease: 'Sine.inOut', paused: true,
     });
-    this.marker.setLighting?.(false);
   }
 
   placeAtTile(tx, ty) {
@@ -47,7 +46,7 @@ export default class NPC extends CharacterSprite {
     // Shrink the static body and re-sync it to the new position.
     this.body.setSize(12, 10);
     this.body.updateFromGameObject();
-    this.syncOverlays();
+    this.positionShadow();
     return this;
   }
 

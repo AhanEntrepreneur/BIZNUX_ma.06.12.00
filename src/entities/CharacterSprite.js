@@ -1,65 +1,47 @@
 import Phaser from 'phaser';
 import { CHAR } from '../config.js';
 import { KEYS } from '../data/assetManifest.js';
-import { FACE_TINTS, HAIR_COLORS, OUTFITS } from '../data/appearance.js';
+import { resolveCharacter } from '../data/appearance.js';
+import { generateCharacterComposite } from '../utils/generateArt.js';
 
-// A layered, appearance-driven character - a 4-piece PAPER DOLL.
+// A character is now ONE sprite drawn from a single COMPOSITED spritesheet
+// (body+bottoms+top+hair baked together per appearance). This is the P.1
+// root-cause fix: the old design used separate overlay sprites repositioned in
+// preUpdate (which runs before the physics step), so overlays rendered at the
+// body's previous position and visibly detached on a real GPU. With one sprite
+// there are no layers to desync - separation is structurally impossible.
 //
-// Extends a plain Sprite (the BODY layer, which carries the physics body in
-// subclasses), because Phaser arcade physics doesn't work on Containers.
-// Bottoms / top / hair are overlay Sprites that MIRROR the body's frame,
-// position, depth and scale every tick, so only the body animates and the
-// overlays stay in sync. A soft drop-shadow sprite sits beneath the feet.
-//
-// Layer draw order (bottom -> top): shadow, body, bottoms, top, hair.
+// Only the soft drop-shadow remains a separate object; it's a static ellipse at
+// the feet where a sub-pixel lag is invisible, and it is repositioned each tick.
 export default class CharacterSprite extends Phaser.Physics.Arcade.Sprite {
   constructor(scene, x, y, appearance) {
-    const bodyKey = appearance.body === 'fem' ? KEYS.BODY_FEM : KEYS.BODY_MASC;
+    const { key, colors } = resolveCharacter(appearance);
+    // Bake (or reuse) the composited sheet for this exact appearance.
+    generateCharacterComposite(scene, key, colors);
+
     const startFrame = CHAR.DIRECTION_OFFSET[appearance.facing || 'down'];
-    super(scene, x, y, bodyKey, startFrame);
+    super(scene, x, y, key, startFrame);
     scene.add.existing(this);
 
     this.facing = appearance.facing || 'down';
-    this.bodyKey = bodyKey;
+    this.sheetKey = key;
 
-    const outfit = OUTFITS[appearance.outfit ?? 0] || OUTFITS[0];
-    const bottomsKey = KEYS.BOTTOMS + outfit.bottoms;
-    const topKey = KEYS.TOP + outfit.top;
-    const hairKey = KEYS.HAIR + (appearance.hair ?? 0);
+    this.shadow = scene.add.image(x, y, KEYS.SHADOW).setOrigin(0.5, 0.5);
 
-    // Drop shadow (on the ground; does not bob with the sprite).
-    this.shadow = scene.add.image(x, y, KEYS.SHADOW);
-    this.shadow.setOrigin(0.5, 0.5);
-
-    // Overlay layers (no physics, no animation; mirror the body each tick).
-    this.bottoms_ = scene.add.sprite(x, y, bottomsKey, startFrame);
-    this.top_ = scene.add.sprite(x, y, topKey, startFrame);
-    this.hair_ = scene.add.sprite(x, y, hairKey, startFrame);
-
-    // Tints (MULTIPLY in v4): face->skin, outfit->clothes, hairColor->hair.
-    const TM = Phaser.TintMode?.MULTIPLY ?? 0;
-    const apply = (spr, color) => { spr.setTint(color); spr.setTintMode?.(TM); };
-    apply(this, appearance.tint ?? FACE_TINTS[appearance.face ?? 0]);
-    apply(this.bottoms_, outfit.botColor);
-    apply(this.top_, outfit.topColor);
-    apply(this.hair_, HAIR_COLORS[appearance.hairColor ?? 0]);
-
-    // Order matters: bottoms, then top, then hair on top of the body.
-    this.overlays = [this.bottoms_, this.top_, this.hair_];
-
-    CharacterSprite.createAnimations(scene, bodyKey);
-    this.syncOverlays();
+    CharacterSprite.createAnimations(scene, key);
+    this.positionShadow();
   }
 
-  static createAnimations(scene, bodyKey) {
+  // Walk animation defined on this appearance's sheet (idempotent per key).
+  static createAnimations(scene, key) {
     const dirs = ['down', 'left', 'right', 'up'];
     dirs.forEach((dir) => {
-      const key = bodyKey + '-walk-' + dir;
-      if (scene.anims.exists(key)) return;
+      const ak = key + '-walk-' + dir;
+      if (scene.anims.exists(ak)) return;
       const o = CHAR.DIRECTION_OFFSET[dir];
       scene.anims.create({
-        key,
-        frames: scene.anims.generateFrameNumbers(bodyKey, { frames: [o + 1, o + 0, o + 2, o + 0] }),
+        key: ak,
+        frames: scene.anims.generateFrameNumbers(key, { frames: [o + 1, o + 0, o + 2, o + 0] }),
         frameRate: 8,
         repeat: -1,
       });
@@ -69,50 +51,46 @@ export default class CharacterSprite extends Phaser.Physics.Arcade.Sprite {
   setFacing(dir, moving) {
     this.facing = dir;
     if (moving) {
-      this.play(this.bodyKey + '-walk-' + dir, true);
+      this.play(this.sheetKey + '-walk-' + dir, true);
     } else {
       this.anims.stop();
       this.setFrame(CHAR.DIRECTION_OFFSET[dir]);
     }
   }
 
-  // Mirror the body's transform + frame onto every overlay, and keep the
-  // shadow planted at the feet. Called every tick via preUpdate.
-  syncOverlays() {
-    const frameName = this.frame.name;
-    const sx = this.scaleX;
-    const sy = this.scaleY;
-    for (let i = 0; i < this.overlays.length; i++) {
-      const o = this.overlays[i];
-      o.setPosition(this.x, this.y);
-      o.setFrame(frameName);
-      o.setScale(sx, sy);
-      o.setVisible(this.visible);
-      // bottoms just above body, top above bottoms, hair above top
-      o.setDepth(this.depth + 0.01 * (i + 1));
-    }
-    // Shadow sits slightly below the feet, under everything.
-    this.shadow.setPosition(this.x, this.y + 7 * Math.abs(sy));
-    this.shadow.setScale(sx, sy);
+  // Swap the character's whole look at runtime (wardrobe). Re-bakes/reuses the
+  // composite sheet for the new appearance and re-points this single sprite.
+  setAppearance(appearance) {
+    const { key, colors } = resolveCharacter(appearance);
+    generateCharacterComposite(this.scene, key, colors);
+    this.sheetKey = key;
+    CharacterSprite.createAnimations(this.scene, key);
+    this.setTexture(key, CHAR.DIRECTION_OFFSET[this.facing]);
+    this.setFacing(this.facing, false);
+  }
+
+  positionShadow() {
+    if (!this.shadow) return;
+    this.shadow.setPosition(this.x, this.y + 7 * Math.abs(this.scaleY));
+    this.shadow.setScale(this.scaleX, this.scaleY);
     this.shadow.setDepth(this.depth - 1);
     this.shadow.setVisible(this.visible);
   }
 
-  // Opt this character (all layers) into the lighting system.
+  // Kept for API compatibility (Atmosphere may call it); the single sprite and
+  // its shadow opt into lighting if the pipeline is active.
   enableLighting() {
     this.setLighting?.(true);
-    this.overlays.forEach((o) => o.setLighting?.(true));
     return this;
   }
 
   preUpdate(time, delta) {
     super.preUpdate(time, delta);
-    this.syncOverlays();
+    this.positionShadow();
   }
 
   destroy(fromScene) {
     this.shadow?.destroy();
-    this.overlays?.forEach((o) => o.destroy());
     super.destroy(fromScene);
   }
 }

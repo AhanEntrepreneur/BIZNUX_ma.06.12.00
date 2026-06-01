@@ -101,7 +101,6 @@ export default class WorldScene extends Phaser.Scene {
     const tileset = map.addTilesetImage('tiles', KEYS.TILES, TILE_SIZE, TILE_SIZE, 0, 0);
     const ground = map.createLayer(0, tileset, 0, 0);
     ground.setDepth(-1000);
-    ground.setLighting?.(true);
 
     // Object layer holds FLAT, collidable map objects (water, building walls).
     // Tall props (trees, planters) become Y-sorted SPRITES instead, so the
@@ -122,7 +121,6 @@ export default class WorldScene extends Phaser.Scene {
     }
     objects.setCollision(COLLIDING_TILES, true);
     objects.setDepth(0);
-    objects.setLighting?.(true);
 
     this.map = map;
     this.objectLayer = objects;
@@ -142,14 +140,12 @@ export default class WorldScene extends Phaser.Scene {
     const wy = ty * TILE_SIZE + TILE_SIZE / 2;
     const spr = this.add.sprite(wx, wy, KEYS.TILES, tileIdx);
     spr.setDepth(wy);
-    spr.setLighting?.(true);
     this.physics.add.existing(spr, true);
     spr.body.setSize(10, 6);
     spr.body.setOffset(3, 10);
     this.treeSprites.push(spr);
     if (tileIdx === TILES.TREE) {
       const sh = this.add.image(wx, wy + 6, KEYS.SHADOW).setDepth(wy - 1).setScale(1.2);
-      sh.setLighting?.(false);
     }
   }
 
@@ -200,7 +196,6 @@ export default class WorldScene extends Phaser.Scene {
   createNPCs() {
     this.npcs = NPCS.map((data) => {
       const npc = new NPC(this, data).placeAtTile(data.tileX, data.tileY);
-      npc.enableLighting?.();
       return npc;
     });
   }

@@ -51,12 +51,9 @@ export function buildManifest() {
 
   m.push({ key: KEYS.TILES, gen: 'tiles', frame: { frameWidth: TILE_SIZE, frameHeight: TILE_SIZE } });
 
-  m.push({ key: KEYS.BODY_MASC, gen: 'body:masc', frame: charFrame });
-  m.push({ key: KEYS.BODY_FEM, gen: 'body:fem', frame: charFrame });
-  for (let i = 0; i < VARIANTS.BOTTOMS; i++) m.push({ key: KEYS.BOTTOMS + i, gen: 'bottoms:' + i, frame: charFrame });
-  for (let i = 0; i < VARIANTS.TOP; i++) m.push({ key: KEYS.TOP + i, gen: 'top:' + i, frame: charFrame });
-  for (let i = 0; i < VARIANTS.HAIR; i++) m.push({ key: KEYS.HAIR + i, gen: 'hair:' + i, frame: charFrame });
-
+  // NOTE: characters are no longer pre-generated as separate body/bottoms/top/
+  // hair sheets. They are composited into ONE sheet per appearance at spawn
+  // (generateCharacterComposite) so the paper-doll layers can never desync.
   m.push({ key: KEYS.DOG, gen: 'dog', frame: charFrame });
 
   // Single-texture props / FX.

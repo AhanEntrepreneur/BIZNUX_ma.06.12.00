@@ -133,7 +133,9 @@ export const CITY = {
   objects,
   buildings,
   searchSpots: SEARCH_SPOTS,
-  spawn: { tileX: 8, tileY: 53 }, // outside the apartment
+  // Spawn on the sidewalk just ABOVE the apartment's top door (door tile y=51,
+  // standing tile y=50), not inside the wall block.
+  spawn: { tileX: 7, tileY: 49 },
   pixelWidth: CITY_WIDTH * TILE_SIZE,
   pixelHeight: CITY_HEIGHT * TILE_SIZE,
 };

@@ -46,3 +46,26 @@ export const DEFAULT_APPEARANCE = {
   hairColor: 1,
   outfit: 0,
 };
+
+// Resolve an appearance object into the concrete color set the composite
+// character generator needs, plus a STABLE texture key (so identical
+// appearances reuse one baked sheet and never regenerate). An optional `tint`
+// (NPCs) overrides the skin color for quick visual variety.
+export function resolveCharacter(appearance) {
+  const a = appearance || {};
+  const outfit = OUTFITS[a.outfit ?? 0] || OUTFITS[0];
+  const skin = a.tint != null ? a.tint : FACE_TINTS[a.face ?? 0];
+  const bodyType = a.body === 'fem' ? 'fem' : 'masc';
+  const hairColor = HAIR_COLORS[a.hairColor ?? 0];
+  const hairStyle = a.hair ?? 0;
+  const colors = {
+    skin,
+    bodyType,
+    bottoms: { color: outfit.botColor, variant: outfit.bottoms },
+    top: { color: outfit.topColor, variant: outfit.top },
+    hair: { color: hairColor, style: hairStyle },
+  };
+  // Key encodes every visual input so distinct looks get distinct baked sheets.
+  const key = `char_${bodyType}_${skin.toString(16)}_${outfit.id}_${hairStyle}_${hairColor.toString(16)}`;
+  return { key, colors };
+}
