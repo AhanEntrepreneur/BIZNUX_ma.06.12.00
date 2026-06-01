@@ -13,8 +13,10 @@
 // generate(scene, genId, key) dispatches by the manifest's `gen` id. Item icons
 // are drawn on demand via generateItemIcons() into one atlas keyed by item id.
 // ---------------------------------------------------------------------------
+import Phaser from 'phaser';
 import { TILE_SIZE, TILE_COUNT, TILES, CHAR, PALETTE } from '../config.js';
 import { ITEMS, ICON_MATERIALS } from '../data/items.js';
+import { OUTLINE, shade, light } from './styleGuide.js';
 
 function css(hex) {
   return '#' + (hex >>> 0).toString(16).padStart(6, '0').slice(-6);
@@ -27,6 +29,10 @@ function newCanvas(scene, key, w, h) {
   const tex = scene.textures.createCanvas(key, w, h);
   const ctx = tex.getContext();
   ctx.imageSmoothingEnabled = false;
+  // Force NEAREST filtering so scaled-up pixel art stays crisp, never blurry
+  // (style-guide rule 5; pixelArt:true covers most cases but canvas textures
+  // can default to LINEAR - set it explicitly at the source).
+  if (tex.setFilter) tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
   return { tex, ctx };
 }
 
@@ -280,74 +286,181 @@ function genSpark(scene, key) {
 // DISPATCH
 // =========================================================================
 // =========================================================================
-// ITEM ICONS - one 16x16 icon per findable item, drawn from shape+material.
-// Produced as a single atlas texture (key 'items'); each item id becomes a
-// named frame so an Image can do scene.add.image(x,y,'items', itemId).
+// ITEM ICONS - one 32x32 icon per findable item, drawn from shape+material to
+// the style guide (3-tone shade ramp, upper-left light, single silhouette
+// outline). Higher res than the 16px world sprites because icons are plain
+// images (no physics frame grid). Produced as one atlas (key 'items'); each
+// item id becomes a named frame for scene.add.image(x,y,'items', itemId).
 // =========================================================================
-function shadeOf(hex, f) {
-  const r = Math.min(255, Math.max(0, ((hex >> 16) & 255) * f));
-  const g = Math.min(255, Math.max(0, ((hex >> 8) & 255) * f));
-  const b = Math.min(255, Math.max(0, (hex & 255) * f));
-  return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b);
+const ICON_SZ = 32;
+
+// Rounded-rect-ish fill with a top-left light band and bottom-right shade band,
+// then a 1px outline around the given bounds. The workhorse for most shapes.
+function panel(ctx, ox, oy, x, y, w, h, base) {
+  const dk = shade(base, 0.68);
+  const lt = light(base, 1.22);
+  px(ctx, ox, oy, x, y, base, w, h);
+  px(ctx, ox, oy, x, y, lt, w, 2); // top light
+  px(ctx, ox, oy, x, y, lt, 2, h); // left light
+  px(ctx, ox, oy, x, y + h - 2, dk, w, 2); // bottom shade
+  px(ctx, ox, oy, x + w - 2, y, dk, 2, h); // right shade
+  outlineRect(ctx, ox, oy, x, y, w, h);
+}
+function outlineRect(ctx, ox, oy, x, y, w, h) {
+  px(ctx, ox, oy, x, y - 1, OUTLINE, w, 1);
+  px(ctx, ox, oy, x, y + h, OUTLINE, w, 1);
+  px(ctx, ox, oy, x - 1, y, OUTLINE, 1, h);
+  px(ctx, ox, oy, x + w, y, OUTLINE, 1, h);
+}
+function disc(ctx, ox, oy, cx, cy, r, base) {
+  const dk = shade(base, 0.68);
+  const lt = light(base, 1.22);
+  ctx.fillStyle = css(OUTLINE);
+  ctx.beginPath(); ctx.arc(ox + cx, oy + cy, r + 1, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = css(base);
+  ctx.beginPath(); ctx.arc(ox + cx, oy + cy, r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = css(dk);
+  ctx.beginPath(); ctx.arc(ox + cx + r * 0.25, oy + cy + r * 0.3, r * 0.7, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = css(base);
+  ctx.beginPath(); ctx.arc(ox + cx, oy + cy, r * 0.7, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = css(lt);
+  ctx.beginPath(); ctx.arc(ox + cx - r * 0.3, oy + cy - r * 0.35, r * 0.28, 0, Math.PI * 2); ctx.fill();
 }
 
-// Per-shape drawer. (ox,oy) is the icon's top-left in the atlas.
+// Per-shape drawer at 32px. (ox,oy) is the icon's top-left in the atlas.
 function drawIcon(ctx, ox, oy, shape, base) {
-  const dk = shadeOf(base, 0.65);
-  const lt = shadeOf(base, 1.25);
-  const outline = 0x141018;
-  const O = (x, y, w, h, c) => px(ctx, ox, oy, x, y, c, w, h);
+  const dk = shade(base, 0.6);
+  const lt = light(base, 1.3);
+  const P = (x, y, w, h, c) => px(ctx, ox, oy, x, y, c, w, h);
   switch (shape) {
     case 'box':
-      O(3, 4, 10, 9, base); O(3, 4, 10, 1, lt); O(3, 12, 10, 1, dk); O(7, 4, 1, 9, dk);
-      O(2, 3, 12, 1, outline); O(2, 13, 12, 1, outline); O(2, 4, 1, 9, outline); O(13, 4, 1, 9, outline); break;
+      panel(ctx, ox, oy, 6, 9, 20, 16, base);
+      P(6, 16, 20, 1, dk); P(15, 9, 2, 16, shade(base, 0.8)); // tape seams
+      break;
     case 'bottle':
-      O(6, 2, 4, 2, lt); O(5, 4, 6, 10, base); O(5, 4, 1, 10, dk); O(10, 4, 1, 10, lt);
-      O(5, 2, 1, 12, outline); O(10, 2, 1, 12, outline); O(5, 13, 6, 1, outline); break;
+      P(13, 3, 6, 4, dk); // cap
+      panel(ctx, ox, oy, 11, 7, 10, 22, base);
+      P(13, 11, 6, 6, lt); // label highlight
+      break;
     case 'phone':
-      O(4, 2, 8, 12, dk); O(5, 3, 6, 9, lt); O(5, 3, 6, 9, base); O(6, 12, 4, 1, lt);
-      O(4, 2, 8, 1, outline); O(4, 13, 8, 1, outline); O(4, 2, 1, 12, outline); O(11, 2, 1, 12, outline); break;
-    case 'ring':
-      O(5, 5, 6, 6, base); O(6, 6, 4, 4, 0x000000); O(7, 3, 2, 2, lt); // gem on top
-      O(5, 5, 6, 1, lt); O(5, 10, 6, 1, dk); break;
+      panel(ctx, ox, oy, 9, 3, 14, 26, shade(base, 0.5));
+      P(11, 6, 10, 18, lt); P(11, 6, 10, 18, base); // screen
+      P(13, 8, 6, 2, light(base, 1.5)); // screen glint
+      disc(ctx, ox, oy, 16, 26, 1.5, dk); break;
+    case 'ring': {
+      const gold = base;
+      ctx.fillStyle = css(OUTLINE);
+      ctx.beginPath(); ctx.arc(ox + 16, oy + 20, 9, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = css(gold);
+      ctx.beginPath(); ctx.arc(ox + 16, oy + 20, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = css(shade(0x0a0a12, 1));
+      ctx.beginPath(); ctx.arc(ox + 16, oy + 20, 5, 0, Math.PI * 2); ctx.fill();
+      P(13, 6, 6, 6, lt); outlineRect(ctx, ox, oy, 13, 6, 6, 6); // gem
+      P(14, 7, 2, 2, 0xffffff); break;
+    }
     case 'watch':
-      O(6, 2, 4, 2, dk); O(6, 12, 4, 2, dk); O(4, 4, 8, 8, base); O(6, 6, 4, 4, lt);
-      O(4, 4, 8, 1, outline); O(4, 11, 8, 1, outline); break;
+      P(13, 2, 6, 6, dk); P(13, 24, 6, 6, dk); // straps
+      disc(ctx, ox, oy, 16, 16, 9, base);
+      P(15, 10, 2, 6, OUTLINE); P(16, 16, 5, 2, OUTLINE); break; // hands
     case 'disc':
-      O(3, 6, 10, 4, base); O(4, 5, 8, 1, lt); O(4, 10, 8, 1, dk); O(7, 7, 2, 2, 0x202020); break;
+      disc(ctx, ox, oy, 16, 16, 12, base);
+      disc(ctx, ox, oy, 16, 16, 3, 0x2a2a32); break;
     case 'book':
-      O(3, 3, 10, 11, base); O(3, 3, 2, 11, dk); O(5, 4, 7, 1, lt); O(5, 6, 6, 1, lt);
-      O(2, 3, 1, 11, outline); O(13, 3, 1, 11, outline); O(3, 2, 10, 1, outline); break;
+      panel(ctx, ox, oy, 7, 5, 18, 22, base);
+      P(7, 5, 4, 22, dk); // spine
+      P(13, 9, 9, 1, lt); P(13, 12, 8, 1, lt); P(13, 15, 9, 1, lt); break;
     case 'can':
-      O(5, 3, 6, 10, base); O(5, 3, 6, 1, lt); O(5, 12, 6, 1, dk); O(5, 6, 6, 1, dk);
-      O(5, 3, 1, 10, outline); O(10, 3, 1, 10, outline); break;
+      panel(ctx, ox, oy, 10, 5, 12, 22, base);
+      P(10, 5, 12, 2, lt); P(10, 25, 12, 2, dk); P(10, 12, 12, 1, shade(base, 0.85)); break;
     case 'cup':
-      O(4, 4, 7, 8, base); O(11, 6, 2, 3, base); O(4, 4, 7, 1, lt); O(4, 11, 7, 1, dk);
-      O(4, 4, 1, 8, outline); O(10, 4, 1, 8, outline); break;
+      panel(ctx, ox, oy, 8, 8, 14, 16, base);
+      P(22, 12, 4, 7, base); outlineRect(ctx, ox, oy, 22, 12, 4, 7); // handle
+      P(10, 10, 10, 2, lt); break;
     case 'tool':
-      O(7, 2, 2, 8, base); O(5, 9, 6, 4, dk); O(7, 2, 1, 8, lt); O(5, 9, 6, 1, lt); break;
+      P(14, 4, 4, 16, base); P(14, 4, 2, 16, lt); // shaft
+      panel(ctx, ox, oy, 10, 18, 12, 8, dk); // head
+      outlineRect(ctx, ox, oy, 14, 4, 4, 16); break;
     case 'shoe':
-      O(3, 8, 11, 4, base); O(3, 11, 11, 1, dk); O(3, 8, 6, 1, lt); O(9, 6, 3, 3, base);
-      O(3, 12, 11, 1, outline); break;
+      panel(ctx, ox, oy, 5, 16, 22, 8, base);
+      P(5, 22, 22, 2, dk); // sole
+      P(18, 11, 8, 6, base); outlineRect(ctx, ox, oy, 18, 11, 8, 6); // ankle
+      P(8, 16, 8, 2, lt); break;
     case 'ball':
-      O(5, 5, 6, 6, base); O(6, 4, 4, 1, lt); O(6, 11, 4, 1, dk); O(4, 6, 1, 4, dk); O(11, 6, 1, 4, lt); break;
+      disc(ctx, ox, oy, 16, 16, 11, base);
+      P(8, 14, 16, 1, dk); P(16, 6, 1, 20, shade(base, 0.85)); break;
     case 'gem':
-      O(7, 3, 2, 2, lt); O(5, 5, 6, 3, base); O(6, 8, 4, 3, dk); O(7, 11, 2, 1, dk); O(6, 5, 1, 3, lt); break;
+      P(11, 8, 10, 4, lt); P(9, 12, 14, 6, base); P(12, 18, 8, 6, dk); P(15, 24, 2, 2, dk);
+      P(11, 12, 2, 6, lt); outlineRect(ctx, ox, oy, 9, 8, 14, 18); break;
     case 'card':
-      O(3, 4, 10, 8, base); O(3, 4, 10, 1, lt); O(3, 11, 10, 1, dk); O(5, 6, 6, 1, lt); O(5, 8, 4, 1, lt);
-      O(2, 3, 12, 1, outline); O(2, 12, 12, 1, outline); break;
-    case 'key':
-      O(4, 5, 4, 4, base); O(5, 6, 2, 2, 0x000000); O(8, 6, 5, 2, base); O(11, 8, 1, 2, base); O(9, 8, 1, 2, base); break;
+      panel(ctx, ox, oy, 6, 8, 20, 16, base);
+      P(9, 12, 14, 2, lt); P(9, 16, 10, 1, lt); P(9, 19, 12, 1, lt); break;
+    case 'key': {
+      disc(ctx, ox, oy, 11, 12, 6, base);
+      disc(ctx, ox, oy, 11, 12, 2.5, 0x0a0a12);
+      P(15, 11, 12, 3, base); P(24, 14, 2, 4, base); P(21, 14, 2, 3, base);
+      outlineRect(ctx, ox, oy, 15, 11, 12, 3); break;
+    }
     case 'bulb':
-      O(5, 3, 6, 6, lt); O(6, 9, 4, 2, dk); O(6, 11, 4, 1, base); O(6, 4, 2, 2, 0xffffff); break;
+      disc(ctx, ox, oy, 16, 12, 8, base);
+      P(12, 19, 8, 4, shade(base, 0.7)); P(13, 23, 6, 2, dk); // base
+      P(13, 8, 3, 3, 0xffffff); break;
+    case 'headphones':
+      // band + two ear cups
+      P(9, 7, 14, 3, dk); P(9, 7, 14, 1, lt);
+      panel(ctx, ox, oy, 6, 10, 6, 12, base);
+      panel(ctx, ox, oy, 20, 10, 6, 12, base); break;
+    case 'glasses':
+      disc(ctx, ox, oy, 11, 16, 5, shade(base, 0.5));
+      disc(ctx, ox, oy, 21, 16, 5, shade(base, 0.5));
+      disc(ctx, ox, oy, 11, 16, 3.5, light(base, 1.4));
+      disc(ctx, ox, oy, 21, 16, 3.5, light(base, 1.4));
+      P(15, 15, 2, 2, dk); break; // bridge
+    case 'lamp':
+      P(11, 5, 10, 6, base); P(11, 5, 10, 2, lt); outlineRect(ctx, ox, oy, 11, 5, 10, 6); // shade
+      P(15, 11, 2, 12, dk); // stem
+      P(11, 23, 10, 3, shade(base, 0.7)); outlineRect(ctx, ox, oy, 11, 23, 10, 3); break; // base
+    case 'bag':
+      panel(ctx, ox, oy, 7, 11, 18, 15, base);
+      P(11, 7, 10, 5, base); outlineRect(ctx, ox, oy, 11, 7, 10, 5); // flap/handle
+      P(7, 11, 18, 2, lt); break;
+    case 'pan':
+      disc(ctx, ox, oy, 13, 17, 8, base);
+      disc(ctx, ox, oy, 13, 17, 6, light(base, 1.1));
+      P(21, 16, 8, 3, dk); outlineRect(ctx, ox, oy, 21, 16, 8, 3); break; // handle
+    case 'speaker':
+      panel(ctx, ox, oy, 9, 5, 14, 22, base);
+      disc(ctx, ox, oy, 16, 12, 4, dk); disc(ctx, ox, oy, 16, 21, 3, dk); break;
+    case 'camera':
+      panel(ctx, ox, oy, 6, 11, 20, 14, base);
+      P(10, 8, 8, 3, shade(base, 0.7)); // top hump
+      disc(ctx, ox, oy, 16, 18, 5, shade(base, 0.55));
+      disc(ctx, ox, oy, 16, 18, 3, light(base, 1.3)); break;
+    case 'board':
+      panel(ctx, ox, oy, 5, 13, 22, 6, base);
+      disc(ctx, ox, oy, 9, 20, 2, dk); disc(ctx, ox, oy, 23, 20, 2, dk); break; // skateboard
     default:
-      O(4, 4, 8, 8, base);
+      panel(ctx, ox, oy, 8, 8, 16, 16, base);
+  }
+}
+
+// Wear overlay: scuff marks for worse conditions (drawn faint over the icon).
+function applyWear(ctx, ox, oy, condition) {
+  if (condition === 'mint' || condition === 'good') return;
+  ctx.fillStyle = condition === 'broken' ? 'rgba(20,16,24,0.5)' : 'rgba(20,16,24,0.28)';
+  const marks = condition === 'broken' ? 6 : condition === 'worn' ? 4 : 2;
+  // deterministic-ish scuffs
+  let seed = ox * 7 + oy * 13 + marks;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  for (let i = 0; i < marks; i++) {
+    const x = 6 + Math.floor(rnd() * 20);
+    const y = 6 + Math.floor(rnd() * 20);
+    ctx.fillRect(ox + x, oy + y, 1 + Math.floor(rnd() * 2), 1);
   }
 }
 
 export function generateItemIcons(scene, key = 'items') {
   if (scene.textures.exists(key)) return;
-  const sz = 16;
+  const sz = ICON_SZ;
   const cols = 8;
   const rows = Math.ceil(ITEMS.length / cols);
   const { tex, ctx } = newCanvas(scene, key, cols * sz, rows * sz);
@@ -358,7 +471,6 @@ export function generateItemIcons(scene, key = 'items') {
     drawIcon(ctx, ox, oy, item.shape, base);
   });
   tex.refresh();
-  // Register a named frame per item id.
   ITEMS.forEach((item, i) => {
     const ox = (i % cols) * sz;
     const oy = Math.floor(i / cols) * sz;
